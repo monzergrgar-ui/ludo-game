@@ -58,12 +58,16 @@ export const HOME_STRETCH: Record<PlayerColor, [number, number][]> = {
   blue: [[13, 7], [12, 7], [11, 7], [10, 7], [9, 7], [8, 7]],
 };
 
-/** 4 base-yard slots per color (row, col), as cell-center coordinates. */
+/**
+ * 4 base-yard slots per color (row, col), as socket-center coordinates.
+ * Each yard is 6x6 with its white panel centered on (origin+3, origin+3), so
+ * the 2x2 socket group sits at ±1 around that point to be perfectly centered.
+ */
 export const BASE_SLOTS: Record<PlayerColor, [number, number][]> = {
-  red: [[1.5, 1.5], [1.5, 3.5], [3.5, 1.5], [3.5, 3.5]],
-  green: [[1.5, 10.5], [1.5, 12.5], [3.5, 10.5], [3.5, 12.5]],
-  yellow: [[10.5, 10.5], [10.5, 12.5], [12.5, 10.5], [12.5, 12.5]],
-  blue: [[10.5, 1.5], [10.5, 3.5], [12.5, 1.5], [12.5, 3.5]],
+  red: [[2, 2], [2, 4], [4, 2], [4, 4]],
+  green: [[2, 11], [2, 13], [4, 11], [4, 13]],
+  yellow: [[11, 11], [11, 13], [13, 11], [13, 13]],
+  blue: [[11, 2], [11, 4], [13, 2], [13, 4]],
 };
 
 /** 4 finished-token slots per color, clustered near the center, as cell-center coordinates. */
@@ -95,8 +99,10 @@ export function getTokenCell(token: Token): { row: number; col: number } {
   const { color, position } = token;
 
   if (position === -1) {
+    // Lift the pawn so its base (ground contact at +0.42) lands on the
+    // socket's center rather than its bottom rim.
     const [row, col] = BASE_SLOTS[color][tokenSlotIndex(token)];
-    return { row, col };
+    return { row: row - 0.42, col };
   }
   if (position === 58) {
     const [row, col] = FINISH_SLOTS[color][tokenSlotIndex(token)];

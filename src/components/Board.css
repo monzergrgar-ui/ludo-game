@@ -16,18 +16,21 @@
   stroke-width: 0.03;
 }
 
+/* outlined star glyph (☆): the fill colors its line art */
 .board-star {
-  fill: #6b6045;
+  fill: #8a8172;
+  font-weight: 700;
   pointer-events: none;
   user-select: none;
 }
 
 .board-star-light {
-  fill: rgba(255, 255, 255, 0.9);
+  fill: rgba(255, 255, 255, 0.95);
 }
 
 .token {
-  transition: transform 0.18s linear;
+  /* per-cell glide: ease-in-out, never linear */
+  transition: transform 0.18s cubic-bezier(0.45, 0.05, 0.55, 0.95), opacity 0.25s ease-out;
   cursor: default;
 }
 
@@ -35,16 +38,33 @@
   cursor: pointer;
 }
 
+/* focus mode: while the player must choose, everything else recedes */
+.choosing .token:not(.token-legal):not(.token-flying) {
+  opacity: 0.5;
+}
+
 .token-gloss {
   fill: rgba(255, 255, 255, 0.8);
   pointer-events: none;
 }
 
+/* breathing pulse on movable tokens */
 .token-highlight {
   fill: rgba(255, 212, 0, 0.15);
   stroke: #ffd400;
   stroke-width: 0.07;
   animation: pulse-highlight 0.9s ease-in-out infinite;
+}
+
+.token-legal .token-body {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: token-breathe 0.9s ease-in-out infinite;
+}
+
+@keyframes token-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
 }
 
 @keyframes pulse-highlight {
@@ -65,7 +85,19 @@
   user-select: none;
 }
 
-/* per-step hop while a token is animating along its path */
+/* anticipation: quick dip/scale-down before the first hop */
+.token-windup .token-body {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: token-windup 0.13s ease-in;
+}
+
+@keyframes token-windup {
+  0% { transform: translateY(0) scale(1); }
+  100% { transform: translateY(0.06px) scale(0.88, 0.8); }
+}
+
+/* per-step hop with squash & stretch: stretch mid-air, squash on contact */
 .token-moving .token-body {
   transform-box: fill-box;
   transform-origin: center;
@@ -73,18 +105,64 @@
 }
 
 @keyframes token-hop {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-0.16px) scale(1.12); }
+  0% { transform: translateY(0) scale(1.06, 0.92); }
+  45% { transform: translateY(-0.18px) scale(0.94, 1.14); }
+  100% { transform: translateY(0) scale(1.06, 0.92); }
 }
 
-.token-popping .token-body {
+/* follow-through: overshoot-and-settle spring on the final cell */
+.token-landed .token-body {
   transform-box: fill-box;
   transform-origin: center;
-  animation: pop-capture 0.4s ease;
+  animation: token-land 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-@keyframes pop-capture {
-  0% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(0.15); opacity: 0.4; }
-  100% { transform: scale(1); opacity: 1; }
+@keyframes token-land {
+  0% { transform: translateY(-0.1px) scale(0.92, 1.16); }
+  35% { transform: translateY(0.02px) scale(1.18, 0.78); }
+  65% { transform: translateY(-0.03px) scale(0.95, 1.07); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+/* captured token: visible arc back to base (spin + dip via mid keyframe) */
+.token-flying .token-body {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: token-flight 0.68s cubic-bezier(0.3, 0, 0.35, 1);
+}
+
+@keyframes token-flight {
+  0% { transform: translate(var(--fx), var(--fy)) rotate(0deg) scale(1); }
+  45% {
+    transform: translate(calc(var(--fx) * 0.5), calc(var(--fy) * 0.5 - 1px))
+      rotate(200deg) scale(0.88);
+  }
+  100% { transform: translate(0, 0) rotate(360deg) scale(1); }
+}
+
+/* token entering home: victory spin-shrink-pop */
+.token-homed .token-body {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: token-home 0.6s cubic-bezier(0.22, 1.2, 0.36, 1);
+}
+
+@keyframes token-home {
+  0% { transform: rotate(0deg) scale(1.5); }
+  55% { transform: rotate(300deg) scale(0.75); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+/* sparkle burst on home entry */
+.sparkle {
+  fill: #ffd75e;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sparkle-fly 0.65s ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes sparkle-fly {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--sx), var(--sy)) scale(0.1); opacity: 0; }
 }

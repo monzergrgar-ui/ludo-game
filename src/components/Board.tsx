@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { Token, PlayerColor } from '../game/types';
 import {
   BOARD_SIZE,
@@ -51,11 +52,21 @@ const ENTRY_ARROWS: { color: PlayerColor; cell: [number, number]; angle: number 
 interface BoardProps {
   tokens: Token[];
   legalMoveIds: Set<string>;
-  poppingIds: Set<string>;
   movingTokenId?: string | null;
+  /** windup = anticipation dip before the first hop; stepping = hopping. */
+  movePhase?: 'windup' | 'stepping' | null;
+  /** Token that just finished a move: plays the overshoot-and-settle. */
+  landedTokenId?: string | null;
+  /** Token that just reached home: plays the spin-shrink + sparkles. */
+  homedTokenId?: string | null;
+  /** Captured tokens flying back to base: id -> offset (in cells) they fly FROM. */
+  flights?: Map<string, { dx: number; dy: number }>;
+  /** Human must pick a move: dims non-movable tokens to focus attention. */
+  choosing?: boolean;
   onTokenClick: (id: string) => void;
 }
 
+/** Outlined (stroke-only) star, as in the reference boards. */
 function Star({ row, col, light }: { row: number; col: number; light?: boolean }) {
   return (
     <text
@@ -65,7 +76,7 @@ function Star({ row, col, light }: { row: number; col: number; light?: boolean }
       textAnchor="middle"
       className={light ? 'board-star board-star-light' : 'board-star'}
     >
-      ★
+      ☆
     </text>
   );
 }
@@ -73,8 +84,12 @@ function Star({ row, col, light }: { row: number; col: number; light?: boolean }
 export default function Board({
   tokens,
   legalMoveIds,
-  poppingIds,
   movingTokenId,
+  movePhase,
+  landedTokenId,
+  homedTokenId,
+  flights,
+  choosing,
   onTokenClick,
 }: BoardProps) {
   // Group tokens sharing a cell so stacks fan out; draw top rows first so
@@ -95,7 +110,7 @@ export default function Board({
 
   return (
     <svg
-      className="ludo-board"
+      className={`ludo-board ${choosing ? 'choosing' : ''}`}
       viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
       role="img"
       aria-label="Ludo board"
@@ -113,9 +128,6 @@ export default function Board({
           <stop offset="65%" stopColor="rgba(0,0,0,0.18)" />
           <stop offset="100%" stopColor="rgba(0,0,0,0)" />
         </radialGradient>
-        <filter id="cell-inset" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="0.02" stdDeviation="0.02" floodOpacity="0.25" />
-        </filter>
       </defs>
 
       {/* base board background */}
@@ -128,20 +140,17 @@ export default function Board({
           <g key={color}>
             <rect x={col} y={row} width={6} height={6} fill={COLORS[color]} rx={0.35} />
             <rect x={col + 0.75} y={row + 0.75} width={4.5} height={4.5} className="yard-inner" rx={0.45} />
-            {/* white circular token sockets */}
+            {/* flat colored token sockets, like the reference */}
             {BASE_SLOTS[color].map(([r, c], i) => (
-              <g key={i}>
-                <circle cx={c} cy={r} r={0.5} fill={COLORS[color]} opacity={0.18} />
-                <circle
-                  cx={c}
-                  cy={r}
-                  r={0.46}
-                  fill="#fff"
-                  stroke="#d9d4c9"
-                  strokeWidth={0.04}
-                  filter="url(#cell-inset)"
-                />
-              </g>
+              <circle
+                key={i}
+                cx={c}
+                cy={r}
+                r={0.5}
+                fill={COLORS[color]}
+                stroke={COLOR_DARK[color]}
+                strokeWidth={0.025}
+              />
             ))}
           </g>
         );
@@ -181,7 +190,7 @@ export default function Board({
               y={row}
               width={1}
               height={1}
-              fill={startColor ? COLORS[startColor] : isNeutralSafe ? '#ece7db' : '#fffdf7'}
+              fill={startColor ? COLORS[startColor] : '#fffdf7'}
               stroke="#b9b0a0"
               strokeWidth={0.03}
             />
@@ -213,8 +222,9 @@ export default function Board({
         const dx = (stackIdx - (stack.length - 1) / 2) * spread;
         const scale = stack.length > 1 ? 0.82 : 1;
         const isLegal = legalMoveIds.has(token.id);
-        const isPopping = poppingIds.has(token.id);
-        const isMoving = token.id === movingTokenId;
+        const isMoving = token.id === movingTokenId && movePhase === 'stepping';
+        const isWindup = token.id === movingTokenId && movePhase === 'windup';
+        const flight = flights?.get(token.id);
         return (
           <g
             key={token.id}
@@ -222,9 +232,17 @@ export default function Board({
             className={[
               'token',
               isLegal ? 'token-legal' : '',
-              isPopping ? 'token-popping' : '',
               isMoving ? 'token-moving' : '',
+              isWindup ? 'token-windup' : '',
+              token.id === landedTokenId ? 'token-landed' : '',
+              token.id === homedTokenId ? 'token-homed' : '',
+              flight ? 'token-flying' : '',
             ].join(' ')}
+            style={
+              flight
+                ? ({ '--fx': `${flight.dx}px`, '--fy': `${flight.dy}px` } as CSSProperties)
+                : undefined
+            }
             onClick={() => isLegal && onTokenClick(token.id)}
           >
             {isLegal && <circle r={0.46} cy={0.06} className="token-highlight" />}
@@ -251,6 +269,34 @@ export default function Board({
           </g>
         );
       })}
+
+      {/* sparkle burst where a token just entered home */}
+      {homedTokenId &&
+        (() => {
+          const cell = cellOf.get(homedTokenId);
+          if (!cell) return null;
+          return (
+            <g className="sparkles" transform={`translate(${cell.col} ${cell.row})`}>
+              {Array.from({ length: 7 }, (_, i) => {
+                const a = (i / 7) * Math.PI * 2;
+                return (
+                  <circle
+                    key={i}
+                    r={0.07}
+                    className="sparkle"
+                    style={
+                      {
+                        '--sx': `${Math.cos(a) * 0.75}px`,
+                        '--sy': `${Math.sin(a) * 0.75}px`,
+                        animationDelay: `${i * 0.03}s`,
+                      } as CSSProperties
+                    }
+                  />
+                );
+              })}
+            </g>
+          );
+        })()}
 
       {/* count badges on crowded squares */}
       {[...groups.entries()]

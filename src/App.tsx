@@ -16,14 +16,14 @@ import {
   type FairRollRecord,
 } from './game/fairness';
 import { ruleBasedBot } from './game/bot';
-import { playSound, soundSettings } from './game/sound';
+import { playSound, soundSettings, setMusicMuted, ensureMusic, vibrate } from './game/sound';
 import {
   getCommentaryLine,
   isUnderThreat,
   isTrailing,
   type CommentaryEvent,
 } from './game/commentary';
-import { COLORS } from './game/board';
+import { COLORS, getTokenCell } from './game/board';
 import type { PlayerColor, Token } from './game/types';
 import './App.css';
 
@@ -41,8 +41,17 @@ const BOTTOM_ROW: PlayerColor[] = ['blue', 'yellow'];
 interface AnimState {
   tokenId: string;
   path: number[];
+  /** -1 = anticipation wind-up, 0..path.length = hopping, >= length = done. */
   step: number;
 }
+
+/** Zoom focus point for the win sequence: each winner's yard corner. */
+const ZOOM_ORIGIN: Record<PlayerColor, string> = {
+  red: '18% 18%',
+  green: '82% 18%',
+  yellow: '82% 82%',
+  blue: '18% 82%',
+};
 
 /* --- 3D-look die with proper pips --- */
 
@@ -60,19 +69,28 @@ interface DieProps {
   rolling: boolean;
   disabled: boolean;
   inactive: boolean;
+  /** Squash-bounce + face punch right after the roll settles. */
+  landing: boolean;
+  /** Small random resting rotation so no two rolls look identical. */
+  restDeg: number;
   onClick: () => void;
 }
 
-function Die({ value, rolling, disabled, inactive, onClick }: DieProps) {
+function Die({ value, rolling, disabled, inactive, landing, restDeg, onClick }: DieProps) {
   const face = value ?? 6;
   return (
     <button
-      className={`die ${rolling ? 'die-tumble' : ''} ${inactive ? 'die-dark' : ''}`}
+      className={`die ${rolling ? 'die-tumble' : ''} ${inactive ? 'die-dark' : ''} ${
+        landing ? 'die-land' : ''
+      }`}
       onClick={onClick}
       disabled={disabled}
       aria-label="Roll the die"
     >
-      <span className="die-face">
+      <span
+        className="die-face"
+        style={{ transform: rolling ? undefined : `rotate(${restDeg}deg)` }}
+      >
         {Array.from({ length: 9 }, (_, i) => (
           <span key={i} className={`pip ${PIP_LAYOUT[face].includes(i) ? 'on' : ''}`} />
         ))}
@@ -91,6 +109,8 @@ interface CornerPanelProps {
   face: number | null;
   rolling: boolean;
   canRoll: boolean;
+  dieLanding: boolean;
+  dieRestDeg: number;
   onRoll: () => void;
 }
 
@@ -102,6 +122,8 @@ function CornerPanel({
   face,
   rolling,
   canRoll,
+  dieLanding,
+  dieRestDeg,
   onRoll,
 }: CornerPanelProps) {
   return (
@@ -120,6 +142,8 @@ function CornerPanel({
         rolling={rolling && active}
         disabled={!canRoll}
         inactive={!active}
+        landing={dieLanding && active}
+        restDeg={dieRestDeg}
         onClick={onRoll}
       />
     </div>
@@ -415,11 +439,20 @@ function App() {
   const [rolling, setRolling] = useState(false);
   const [faces, setFaces] = useState<Partial<Record<PlayerColor, number>>>({});
   const [anim, setAnim] = useState<AnimState | null>(null);
-  const [poppingIds, setPoppingIds] = useState<Set<string>>(new Set());
   const [banner, setBanner] = useState<string | null>(null);
   const [shaking, setShaking] = useState(false);
   const [feed, setFeed] = useState<string[]>([]);
   const [muted, setMuted] = useState(soundSettings.muted);
+  const [musicOn, setMusicOn] = useState(!soundSettings.musicMuted);
+  // juice state
+  const [flights, setFlights] = useState<Map<string, { dx: number; dy: number }>>(new Map());
+  const [hitstop, setHitstop] = useState(false);
+  const [landedId, setLandedId] = useState<string | null>(null);
+  const [homedId, setHomedId] = useState<string | null>(null);
+  const [dieLanding, setDieLanding] = useState(false);
+  const [dieRestDeg, setDieRestDeg] = useState(0);
+  const [winStage, setWinStage] = useState(0); // 0 idle, 1 zoom, 2 confetti, 3 panel
+  const pendingRollAt = useRef<number | null>(null);
 
   // Provably-fair dice: simulated server + commitment/reveal bookkeeping.
   const providerRef = useRef(new SimulatedFairnessServer());
@@ -441,39 +474,76 @@ function App() {
   const toggleMute = () => {
     soundSettings.muted = !soundSettings.muted;
     setMuted(soundSettings.muted);
+    if (!soundSettings.muted) ensureMusic();
+  };
+
+  const toggleMusic = () => {
+    setMusicMuted(musicOn); // musicOn is the previous state here
+    setMusicOn(!musicOn);
   };
 
   // Step the currently-moving token through its path one cell at a time.
+  // State is applied the moment the hop sequence ends — decorative effects
+  // (flights, shake, sparkles) never gate the game state.
   useEffect(() => {
     if (!anim) return;
+
+    // anticipation wind-up before the first hop
+    if (anim.step === -1) {
+      const t = setTimeout(() => setAnim(a => (a ? { ...a, step: 0 } : null)), 130);
+      return () => clearTimeout(t);
+    }
 
     if (anim.step >= anim.path.length) {
       const dice = state.diceValue!;
       const mover = state.currentPlayer;
+      const movedId = anim.tokenId;
       const wasTrailing = isTrailing(state, mover);
-      const result = applyMove(state, anim.tokenId, dice);
+      const result = applyMove(state, movedId, dice);
       const action = result.lastAction;
+      const captured = action?.type === 'move' ? action.captured : [];
+      const reachedHome = action?.type === 'move' && action.to === 58;
 
-      if (action?.type === 'move' && action.captured.length) {
-        playSound('capture');
-        setShaking(true);
-        setTimeout(() => setShaking(false), 450);
-        const captured = new Set(action.captured);
-        setPoppingIds(captured);
-        setTimeout(() => setPoppingIds(new Set()), 400);
-        const victim = result.tokens.find(t => t.id === action.captured[0])!.color;
+      if (captured.length) {
+        // Visible arc back to base: offsets from each victim's old cell.
+        const map = new Map<string, { dx: number; dy: number }>();
+        for (const cid of captured) {
+          const from = getTokenCell(state.tokens.find(t => t.id === cid)!);
+          const to = getTokenCell(result.tokens.find(t => t.id === cid)!);
+          map.set(cid, { dx: from.col - to.col, dy: from.row - to.row });
+        }
+        // Hit-stop: freeze the impact for ~80ms, then unleash everything.
+        setFlights(map);
+        setHitstop(true);
+        setTimeout(() => {
+          setHitstop(false);
+          playSound('capture');
+          vibrate([35, 40, 70]);
+          setShaking(true);
+          setTimeout(() => setShaking(false), 450);
+        }, 80);
+        setTimeout(() => setFlights(new Map()), 800);
+        const victim = result.tokens.find(t => t.id === captured[0])!.color;
         pushComment({ type: wasTrailing ? 'comeback' : 'capture', player: mover, victim });
       } else if (result.winner) {
-        // handled below
-      } else if (action?.type === 'move' && action.to === 58) {
+        // win sequence effect takes over
+      } else if (reachedHome) {
         playSound('home');
+        vibrate([20, 30, 25]);
+        setHomedId(movedId);
+        setTimeout(() => setHomedId(null), 750);
         pushComment({ type: wasTrailing ? 'comeback' : 'home', player: mover });
-      } else if (isUnderThreat(result, anim.tokenId) && Math.random() < 0.5) {
+      } else if (isUnderThreat(result, movedId) && Math.random() < 0.5) {
         pushComment({ type: 'nearMiss', player: mover });
       }
 
+      if (!reachedHome && !result.winner) {
+        // follow-through: overshoot-and-settle on the final cell
+        setLandedId(movedId);
+        setTimeout(() => setLandedId(null), 450);
+      }
+
       if (result.winner) {
-        playSound('win');
         pushComment({ type: 'win', player: result.winner });
       }
 
@@ -487,6 +557,27 @@ function App() {
     }, 180);
     return () => clearTimeout(timer);
   }, [anim, state]);
+
+  // Cinematic win sequence: pause -> zoom toward the winner's yard ->
+  // confetti + fanfare -> game-over panel eases in.
+  useEffect(() => {
+    if (!state.winner) {
+      setWinStage(0);
+      return;
+    }
+    const t1 = setTimeout(() => setWinStage(1), 350);
+    const t2 = setTimeout(() => {
+      playSound('win');
+      vibrate([60, 80, 60, 80, 140]);
+      setWinStage(2);
+    }, 800);
+    const t3 = setTimeout(() => setWinStage(3), 1700);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [state.winner]);
 
   // Soft cue whenever the turn moves to another player.
   const prevPlayerRef = useRef(state.currentPlayer);
@@ -525,27 +616,58 @@ function App() {
     playSound('dice');
     const record = await providerRef.current.roll(clientSeed);
     const nextCommitment = await providerRef.current.getCommitment();
-    let ticks = 0;
-    const interval = setInterval(() => {
-      setFaces(f => ({ ...f, [roller]: Math.floor(Math.random() * 6) + 1 }));
-      ticks++;
-      if (ticks >= 6) {
-        clearInterval(interval);
-        setFaces(f => ({ ...f, [roller]: record.value }));
-        setLastRoll(record);
-        setCommitment(nextCommitment);
-        verifyRoll(record).then(r => setLastRollValid(r.valid));
-        setRolling(false);
-        setState(s => registerDiceRoll(s, record.value));
+    // Decelerating tumble: face swaps slow down like a real die losing energy.
+    const tickDelays = [65, 75, 90, 110, 140, 180];
+    let tick = 0;
+    const nextTick = () => {
+      if (tick < tickDelays.length) {
+        setFaces(f => ({ ...f, [roller]: Math.floor(Math.random() * 6) + 1 }));
+        setTimeout(nextTick, tickDelays[tick]);
+        tick++;
+        return;
       }
-    }, 80);
+      // landing: squash-bounce, face punch, random resting rotation, haptic
+      setFaces(f => ({ ...f, [roller]: record.value }));
+      setDieRestDeg(Math.random() * 22 - 11);
+      setDieLanding(true);
+      setTimeout(() => setDieLanding(false), 380);
+      vibrate(12);
+      setLastRoll(record);
+      setCommitment(nextCommitment);
+      verifyRoll(record).then(r => setLastRollValid(r.valid));
+      setRolling(false);
+      setState(s => registerDiceRoll(s, record.value));
+    };
+    nextTick();
   };
+
+  // Instant-response roll request with input buffering: a tap during the last
+  // step of a move animation is queued and fires the moment the board is free.
+  const requestRoll = () => {
+    if (!busy && state.diceValue === null && !state.winner && !currentIsBot) {
+      void handleRoll();
+      return;
+    }
+    if (anim && anim.step >= 0 && anim.path.length - anim.step <= 1) {
+      pendingRollAt.current = Date.now();
+    }
+  };
+
+  useEffect(() => {
+    if (pendingRollAt.current === null) return;
+    if (busy || state.winner || currentIsBot || state.diceValue !== null) return;
+    const fresh = Date.now() - pendingRollAt.current < 700;
+    pendingRollAt.current = null;
+    if (fresh) void handleRoll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, state, currentIsBot]);
 
   const moveToken = (tokenId: string) => {
     if (anim || state.diceValue === null) return;
     const token = state.tokens.find(t => t.id === tokenId)!;
     const path = getMovePath(token, state.diceValue);
-    setAnim({ tokenId, path, step: 0 });
+    playSound('step'); // instant audible response to the tap
+    setAnim({ tokenId, path, step: -1 }); // -1 = wind-up first
   };
 
   const handleTokenClick = (tokenId: string) => {
@@ -574,27 +696,35 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIsBot, busy, state]);
 
+  const resetTransients = () => {
+    setAnim(null);
+    setBanner(null);
+    setFaces({});
+    setFeed([]);
+    setFlights(new Map());
+    setHitstop(false);
+    setLandedId(null);
+    setHomedId(null);
+    setShaking(false);
+    pendingRollAt.current = null;
+  };
+
   const startGame = (seats: PlayerColor[], bots: Set<PlayerColor>) => {
     setPlayers(seats);
     setBotSeats(bots);
     setState(createInitialState(seats));
-    setFaces({});
-    setAnim(null);
-    setBanner(null);
-    setFeed([]);
+    resetTransients();
   };
 
   const restart = () => {
     setPlayers(null);
-    setAnim(null);
-    setBanner(null);
-    setFaces({});
-    setFeed([]);
+    resetTransients();
   };
 
-  // Override the animating token's position with its current path step for rendering.
+  // Override the animating token's position with its current path step for
+  // rendering (during the wind-up, step is -1 and the token stays put).
   const renderTokens = state.tokens.map(t => {
-    if (anim && t.id === anim.tokenId) {
+    if (anim && t.id === anim.tokenId && anim.step >= 0) {
       const idx = Math.min(anim.step, anim.path.length - 1);
       return { ...t, position: anim.path[idx] };
     }
@@ -610,9 +740,18 @@ function App() {
   }, [state.tokens]);
 
   const muteButton = (
-    <button className="mute-btn" onClick={toggleMute} aria-label="Toggle sound">
-      {muted ? '🔇' : '🔊'}
-    </button>
+    <>
+      <button className="mute-btn" onClick={toggleMute} aria-label="Toggle sound">
+        {muted ? '🔇' : '🔊'}
+      </button>
+      <button
+        className={`mute-btn music-btn ${musicOn ? '' : 'off'}`}
+        onClick={toggleMusic}
+        aria-label="Toggle music"
+      >
+        ♪
+      </button>
+    </>
   );
 
   if (!inGame) {
@@ -675,11 +814,15 @@ function App() {
                   canRoll={
                     color === state.currentPlayer &&
                     !currentIsBot &&
-                    !busy &&
-                    state.diceValue === null &&
-                    !state.winner
+                    !rolling &&
+                    !state.winner &&
+                    // rollable now, or mid-move-animation (taps near the end
+                    // are buffered by requestRoll and fire right after)
+                    (state.diceValue === null || anim !== null)
                   }
-                  onRoll={handleRoll}
+                  dieLanding={dieLanding}
+                  dieRestDeg={dieRestDeg}
+                  onRoll={requestRoll}
                 />
               ) : (
                 <div key={color} className="corner-spacer" />
@@ -687,13 +830,28 @@ function App() {
             )}
           </div>
         ))}
-        <div className={`board-wrap ${shaking ? 'shake' : ''}`} style={{ order: 1 }}>
+        <div
+          className={[
+            'board-wrap',
+            shaking ? 'shake' : '',
+            hitstop ? 'hitstop' : '',
+            winStage >= 1 ? 'board-zoom' : '',
+          ].join(' ')}
+          style={{
+            order: 1,
+            transformOrigin: state.winner ? ZOOM_ORIGIN[state.winner] : undefined,
+          }}
+        >
           <div className="board-frame">
             <Board
               tokens={renderTokens}
               legalMoveIds={legalMoveIds}
-              poppingIds={poppingIds}
               movingTokenId={anim?.tokenId ?? null}
+              movePhase={anim ? (anim.step === -1 ? 'windup' : 'stepping') : null}
+              landedTokenId={landedId}
+              homedTokenId={homedId}
+              flights={flights}
+              choosing={!currentIsBot && !busy && legalMoves.length > 0}
               onTokenClick={handleTokenClick}
             />
           </div>
@@ -701,16 +859,7 @@ function App() {
       </div>
 
       <div className="controls">
-        {state.winner ? (
-          <div className="winner-actions">
-            <button className="start-btn" onClick={() => startGame(players!, botSeats)}>
-              Play Again
-            </button>
-            <button className="pass-btn" onClick={restart}>
-              Change Players
-            </button>
-          </div>
-        ) : (
+        {!state.winner && (
           <>
             {state.diceValue !== null && !anim && !currentIsBot && legalMoves.length === 0 && (
               <button className="pass-btn" onClick={handlePass}>
@@ -733,7 +882,27 @@ function App() {
         />
       </div>
 
-      {state.winner && <Confetti />}
+      {winStage >= 2 && <Confetti />}
+
+      {winStage >= 3 && state.winner && (
+        <div className="game-over">
+          <div
+            className="game-over-panel"
+            style={{ '--winner-color': COLORS[state.winner] } as CSSProperties}
+          >
+            <span className="game-over-trophy">🏆</span>
+            <h2>{state.winner.toUpperCase()} WINS!</h2>
+            <div className="winner-actions">
+              <button className="start-btn" onClick={() => startGame(players!, botSeats)}>
+                Play Again
+              </button>
+              <button className="pass-btn" onClick={restart}>
+                Change Players
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
