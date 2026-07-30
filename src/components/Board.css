@@ -1,0 +1,59 @@
+.ludo-board {
+  width: 100%;
+  max-width: 560px;
+  aspect-ratio: 1;
+  display: block;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.15);
+}
+
+.board-bg {
+  fill: #fff;
+}
+
+.yard-inner {
+  fill: #fff;
+  stroke: #ccc;
+  stroke-width: 0.03;
+}
+
+.board-star {
+  fill: #444;
+  pointer-events: none;
+  user-select: none;
+}
+
+.token {
+  transition: transform 0.18s linear;
+  cursor: default;
+}
+
+.token-legal {
+  cursor: pointer;
+}
+
+.token-highlight {
+  fill: none;
+  stroke: #ffd400;
+  stroke-width: 0.06;
+  animation: pulse-highlight 0.9s ease-in-out infinite;
+}
+
+@keyframes pulse-highlight {
+  0%, 100% { opacity: 0.5; r: 0.4; }
+  50% { opacity: 1; r: 0.46; }
+}
+
+.token-popping circle:nth-child(2) {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pop-capture 0.4s ease;
+}
+
+@keyframes pop-capture {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.15); opacity: 0.4; }
+  100% { transform: scale(1); opacity: 1; }
+}
