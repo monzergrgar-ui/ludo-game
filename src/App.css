@@ -319,21 +319,33 @@ body {
   gap: 12px;
 }
 
+/* small per-player die: a turn indicator, not a focal prop */
 .die {
-  width: 54px;
-  height: 54px;
+  width: 38px;
+  height: 38px;
   padding: 0;
   border: none;
-  border-radius: 16px;
+  border-radius: 11px;
   background: linear-gradient(150deg, #ffffff 0%, #fdfdfb 45%, #ebe9e2 80%, #dcd9cf 100%);
   box-shadow:
-    0 5px 0 #a8a397,
-    0 6px 2px rgba(0, 0, 0, 0.25),
-    0 12px 18px rgba(0, 0, 0, 0.5),
-    inset 0 2px 3px rgba(255, 255, 255, 1),
-    inset 0 -3px 5px rgba(0, 0, 0, 0.1);
+    0 3px 0 #a8a397,
+    0 4px 2px rgba(0, 0, 0, 0.22),
+    0 7px 12px rgba(0, 0, 0, 0.4),
+    inset 0 1px 2px rgba(255, 255, 255, 1),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.1);
   cursor: pointer;
-  transition: transform 0.1s, filter 0.2s;
+  transition: transform 0.1s, filter 0.2s, box-shadow 0.2s;
+}
+
+/* light glow on the active player's die */
+.panel-active .die {
+  box-shadow:
+    0 3px 0 #a8a397,
+    0 4px 2px rgba(0, 0, 0, 0.22),
+    0 7px 12px rgba(0, 0, 0, 0.4),
+    0 0 10px 2px rgba(255, 215, 94, 0.55),
+    inset 0 1px 2px rgba(255, 255, 255, 1),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.1);
 }
 
 .die:hover:not(:disabled) {
@@ -392,15 +404,15 @@ body {
   grid-template-rows: repeat(3, 1fr);
   width: 100%;
   height: 100%;
-  padding: 9px;
+  padding: 6px;
   box-sizing: border-box;
 }
 
 .pip {
   align-self: center;
   justify-self: center;
-  width: 9px;
-  height: 9px;
+  width: 6.5px;
+  height: 6.5px;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #4a4a4a, #0c0c0c 70%);
   box-shadow:
@@ -451,6 +463,15 @@ body {
   font-size: 13px;
   cursor: pointer;
   text-decoration: underline;
+}
+
+.auto-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 13px;
+  cursor: pointer;
 }
 
 /* --- win confetti --- */
@@ -836,18 +857,18 @@ body {
   }
 
   .die {
-    width: 44px;
-    height: 44px;
-    border-radius: 13px;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
   }
 
   .die-face {
-    padding: 8px;
+    padding: 5px;
   }
 
   .pip {
-    width: 7px;
-    height: 7px;
+    width: 5.5px;
+    height: 5.5px;
   }
 
   .commentary-latest {

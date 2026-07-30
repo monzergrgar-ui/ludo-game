@@ -12,7 +12,7 @@ export interface SoundSettings {
 
 export const soundSettings: SoundSettings = { muted: false, musicMuted: false };
 
-export type SoundName = 'dice' | 'step' | 'capture' | 'home' | 'win' | 'turn';
+export type SoundName = 'dice' | 'step' | 'capture' | 'home' | 'win' | 'turn' | 'unlucky';
 
 let ctx: AudioContext | null = null;
 
@@ -131,6 +131,11 @@ const effects: Record<SoundName, (ac: AudioContext) => void> = {
   turn(ac) {
     tone(ac, 440, { dur: 0.08, type: 'sine', gain: 0.06 });
     tone(ac, 587, { at: 0.09, dur: 0.1, type: 'sine', gain: 0.06 });
+  },
+  /** Gentle descending "no moves, unlucky" cue. */
+  unlucky(ac) {
+    tone(ac, 392, { dur: 0.14, type: 'sine', gain: 0.07 });
+    tone(ac, 294, { at: 0.15, dur: 0.22, type: 'sine', gain: 0.07, glideTo: 262 });
   },
 };
 

@@ -452,6 +452,7 @@ function App() {
   const [dieLanding, setDieLanding] = useState(false);
   const [dieRestDeg, setDieRestDeg] = useState(0);
   const [winStage, setWinStage] = useState(0); // 0 idle, 1 zoom, 2 confetti, 3 panel
+  const [autoMoveSingles, setAutoMoveSingles] = useState(true);
   const pendingRollAt = useRef<number | null>(null);
 
   // Provably-fair dice: simulated server + commitment/reveal bookkeeping.
@@ -588,17 +589,12 @@ function App() {
     }
   }, [state.currentPlayer, state.winner, inGame]);
 
-  // Show a transient banner for forfeits/passes, then clear it.
+  // Show a transient banner for three-sixes forfeits, then clear it.
+  // (No-move turns get their pre-pass indicator from the auto-pass effect.)
   useEffect(() => {
-    if (!state.lastAction) return;
-    if (state.lastAction.type === 'forfeitSixes') {
-      setBanner(`${state.lastAction.player.toUpperCase()} rolled three 6s — turn forfeited!`);
-      pushComment({ type: 'threeSixes', player: state.lastAction.player });
-    } else if (state.lastAction.type === 'pass') {
-      setBanner(`${state.lastAction.player.toUpperCase()} had no legal moves — turn passed.`);
-    } else {
-      return;
-    }
+    if (state.lastAction?.type !== 'forfeitSixes') return;
+    setBanner(`${state.lastAction.player.toUpperCase()} rolled three 6s — turn forfeited!`);
+    pushComment({ type: 'threeSixes', player: state.lastAction.player });
     const t = setTimeout(() => setBanner(null), 1800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -675,19 +671,43 @@ function App() {
     moveToken(tokenId);
   };
 
-  const handlePass = () => setState(s => passTurn(s));
+  // No legal moves (any player): flash a "no moves" indicator with a soft
+  // unlucky cue, then advance the turn automatically. No pass button.
+  useEffect(() => {
+    if (state.winner || busy || state.diceValue === null) return;
+    if (legalMoves.length > 0) return;
+    setBanner(`${state.currentPlayer.toUpperCase()} — no moves, unlucky! 🎲`);
+    playSound('unlucky');
+    const t = setTimeout(() => {
+      setBanner(null);
+      setState(s => passTurn(s));
+    }, 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, busy]);
 
-  // Bot autoplay: roll, then move (or pass), with small delays for readability.
+  // Auto-move when exactly one legal move exists. Checked continuously (every
+  // state change), so it also fires mid-sequence — e.g. the extra roll after a
+  // 6 auto-moves again if it too has a single option. A short delay leaves the
+  // highlight visible so the player sees what happened.
+  useEffect(() => {
+    if (!autoMoveSingles || currentIsBot || state.winner || busy) return;
+    if (state.diceValue === null || legalMoves.length !== 1) return;
+    const tokenId = legalMoves[0].id;
+    const t = setTimeout(() => moveToken(tokenId), 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, busy, currentIsBot, autoMoveSingles]);
+
+  // Bot autoplay: roll, then move, with small delays for readability.
+  // (The shared no-move effect above handles the bot's pass case too.)
   useEffect(() => {
     if (!currentIsBot || busy || state.winner) return;
     if (state.diceValue === null) {
       const t = setTimeout(() => void handleRoll(), 650);
       return () => clearTimeout(t);
     }
-    if (legalMoves.length === 0) {
-      const t = setTimeout(() => handlePass(), 900);
-      return () => clearTimeout(t);
-    }
+    if (legalMoves.length === 0) return;
     const t = setTimeout(async () => {
       const tokenId = await ruleBasedBot(state, legalMoves, state.diceValue!);
       moveToken(tokenId);
@@ -861,11 +881,14 @@ function App() {
       <div className="controls">
         {!state.winner && (
           <>
-            {state.diceValue !== null && !anim && !currentIsBot && legalMoves.length === 0 && (
-              <button className="pass-btn" onClick={handlePass}>
-                No legal moves — Pass turn
-              </button>
-            )}
+            <label className="auto-toggle">
+              <input
+                type="checkbox"
+                checked={autoMoveSingles}
+                onChange={e => setAutoMoveSingles(e.target.checked)}
+              />
+              Auto-move single options
+            </label>
 
             <button className="restart-link" onClick={restart}>
               ⟲ Restart
