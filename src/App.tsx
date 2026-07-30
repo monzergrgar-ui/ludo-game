@@ -119,16 +119,31 @@ function Confetti() {
   );
 }
 
-/* --- setup screen --- */
+/* --- setup: mode selection, then per-mode options --- */
+
+const SEAT_ORDER: PlayerColor[] = ['red', 'green', 'yellow', 'blue'];
+const OPPOSITE: Record<PlayerColor, PlayerColor> = {
+  red: 'yellow',
+  yellow: 'red',
+  green: 'blue',
+  blue: 'green',
+};
+
+type GameMode = 'vsComputer' | 'passPlay';
 
 interface SetupScreenProps {
   onStart: (players: PlayerColor[], bots: Set<PlayerColor>) => void;
 }
 
 function SetupScreen({ onStart }: SetupScreenProps) {
+  const [mode, setMode] = useState<GameMode | null>(null);
+  // Play vs Computer
+  const [myColor, setMyColor] = useState<PlayerColor>('red');
+  const [oppCount, setOppCount] = useState(1);
+  // Pass & Play
   const [count, setCount] = useState(4);
+  const [advanced, setAdvanced] = useState(false);
   const [bots, setBots] = useState<Set<PlayerColor>>(new Set());
-  const players = SEATS_FOR_COUNT[count];
 
   const toggleBot = (color: PlayerColor) => {
     setBots(prev => {
@@ -139,45 +154,138 @@ function SetupScreen({ onStart }: SetupScreenProps) {
     });
   };
 
+  const startVsComputer = () => {
+    // Opposite corner first for good board spread, then the rest.
+    const preference = [
+      OPPOSITE[myColor],
+      ...SEAT_ORDER.filter(c => c !== myColor && c !== OPPOSITE[myColor]),
+    ];
+    const opponents = preference.slice(0, oppCount);
+    const seats = SEAT_ORDER.filter(c => c === myColor || opponents.includes(c));
+    // Rotate so the human rolls first (cyclic order is preserved).
+    const me = seats.indexOf(myColor);
+    onStart([...seats.slice(me), ...seats.slice(0, me)], new Set(opponents));
+  };
+
+  const passPlayers = SEATS_FOR_COUNT[count];
+
+  if (mode === null) {
+    return (
+      <div className="setup">
+        <h2>Choose Mode</h2>
+        <div className="mode-btns">
+          <button className="mode-btn" onClick={() => setMode('vsComputer')}>
+            <span className="mode-icon">🤖</span>
+            <span className="mode-title">Play vs Computer</span>
+            <span className="mode-sub">You against 1–3 bot opponents</span>
+          </button>
+          <button className="mode-btn" onClick={() => setMode('passPlay')}>
+            <span className="mode-icon">👥</span>
+            <span className="mode-title">Pass &amp; Play</span>
+            <span className="mode-sub">Friends on this device</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'vsComputer') {
+    return (
+      <div className="setup">
+        <h2>Play vs Computer</h2>
+        <div className="setup-group">
+          <p className="setup-label">Your color</p>
+          <div className="color-picker">
+            {SEAT_ORDER.map(color => (
+              <button
+                key={color}
+                className={`color-swatch ${myColor === color ? 'selected' : ''}`}
+                style={{ '--swatch-color': COLORS[color] } as CSSProperties}
+                onClick={() => setMyColor(color)}
+                aria-label={color}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="setup-group">
+          <p className="setup-label">Opponents</p>
+          <div className="setup-counts">
+            {[1, 2, 3].map(n => (
+              <button
+                key={n}
+                className={`count-btn ${oppCount === n ? 'selected' : ''}`}
+                onClick={() => setOppCount(n)}
+              >
+                {n} bot{n > 1 ? 's' : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button className="start-btn" onClick={startVsComputer}>
+          Start Game
+        </button>
+        <button className="restart-link" onClick={() => setMode(null)}>
+          ← Back
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="setup">
-      <h2>New Game</h2>
-      <div className="setup-counts">
-        {[2, 3, 4].map(n => (
-          <button
-            key={n}
-            className={`count-btn ${count === n ? 'selected' : ''}`}
-            onClick={() => setCount(n)}
-          >
-            {n} players
-          </button>
-        ))}
+      <h2>Pass &amp; Play</h2>
+      <div className="setup-group">
+        <p className="setup-label">Players</p>
+        <div className="setup-counts">
+          {[2, 3, 4].map(n => (
+            <button
+              key={n}
+              className={`count-btn ${count === n ? 'selected' : ''}`}
+              onClick={() => setCount(n)}
+            >
+              {n} players
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="setup-seats">
-        {players.map(color => (
-          <div
-            key={color}
-            className="seat-row"
-            style={{ '--seat-color': COLORS[color] } as CSSProperties}
-          >
-            <span className="seat-dot" />
-            <span className="seat-name">{color.toUpperCase()}</span>
-            <label className="seat-toggle">
-              <input
-                type="checkbox"
-                checked={bots.has(color)}
-                onChange={() => toggleBot(color)}
-              />
-              Bot
-            </label>
-          </div>
-        ))}
-      </div>
+      <button className="advanced-toggle" onClick={() => setAdvanced(a => !a)}>
+        Advanced: mixed humans &amp; bots {advanced ? '▴' : '▾'}
+      </button>
+      {advanced && (
+        <div className="setup-seats">
+          {passPlayers.map(color => (
+            <div
+              key={color}
+              className="seat-row"
+              style={{ '--seat-color': COLORS[color] } as CSSProperties}
+            >
+              <span className="seat-dot" />
+              <span className="seat-name">{color.toUpperCase()}</span>
+              <label className="seat-toggle">
+                <input
+                  type="checkbox"
+                  checked={bots.has(color)}
+                  onChange={() => toggleBot(color)}
+                />
+                Bot
+              </label>
+            </div>
+          ))}
+        </div>
+      )}
       <button
         className="start-btn"
-        onClick={() => onStart(players, new Set(players.filter(c => bots.has(c))))}
+        onClick={() =>
+          onStart(
+            passPlayers,
+            new Set(advanced ? passPlayers.filter(c => bots.has(c)) : []),
+          )
+        }
       >
         Start Game
+      </button>
+      <button className="restart-link" onClick={() => setMode(null)}>
+        ← Back
       </button>
     </div>
   );

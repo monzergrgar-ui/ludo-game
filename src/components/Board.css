@@ -36,7 +36,7 @@
 }
 
 .token-gloss {
-  fill: rgba(255, 255, 255, 0.55);
+  fill: rgba(255, 255, 255, 0.8);
   pointer-events: none;
 }
 
@@ -48,8 +48,21 @@
 }
 
 @keyframes pulse-highlight {
-  0%, 100% { opacity: 0.55; r: 0.42; }
-  50% { opacity: 1; r: 0.48; }
+  0%, 100% { opacity: 0.55; r: 0.44; }
+  50% { opacity: 1; r: 0.5; }
+}
+
+.stack-badge circle {
+  fill: rgba(20, 20, 20, 0.85);
+  stroke: #fff;
+  stroke-width: 0.04;
+}
+
+.stack-badge text {
+  fill: #fff;
+  font-weight: 700;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* per-step hop while a token is animating along its path */
