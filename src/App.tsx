@@ -34,13 +34,9 @@ const SEATS_FOR_COUNT: Record<number, PlayerColor[]> = {
   4: ['red', 'green', 'yellow', 'blue'],
 };
 
-/** Which corner of the board each color's yard occupies. */
-const PLATE_CORNER: Record<PlayerColor, string> = {
-  red: 'tl',
-  green: 'tr',
-  yellow: 'br',
-  blue: 'bl',
-};
+/** Corner panel rows around the board, matching each color's yard corner. */
+const TOP_ROW: PlayerColor[] = ['red', 'green'];
+const BOTTOM_ROW: PlayerColor[] = ['blue', 'yellow'];
 
 interface AnimState {
   tokenId: string;
@@ -63,14 +59,15 @@ interface DieProps {
   value: number | null;
   rolling: boolean;
   disabled: boolean;
+  inactive: boolean;
   onClick: () => void;
 }
 
-function Die({ value, rolling, disabled, onClick }: DieProps) {
+function Die({ value, rolling, disabled, inactive, onClick }: DieProps) {
   const face = value ?? 6;
   return (
     <button
-      className={`die ${rolling ? 'die-tumble' : ''}`}
+      className={`die ${rolling ? 'die-tumble' : ''} ${inactive ? 'die-dark' : ''}`}
       onClick={onClick}
       disabled={disabled}
       aria-label="Roll the die"
@@ -81,6 +78,51 @@ function Die({ value, rolling, disabled, onClick }: DieProps) {
         ))}
       </span>
     </button>
+  );
+}
+
+/* --- corner player panel: avatar + name + that player's die --- */
+
+interface CornerPanelProps {
+  color: PlayerColor;
+  isBot: boolean;
+  active: boolean;
+  homeCount: number;
+  face: number | null;
+  rolling: boolean;
+  canRoll: boolean;
+  onRoll: () => void;
+}
+
+function CornerPanel({
+  color,
+  isBot,
+  active,
+  homeCount,
+  face,
+  rolling,
+  canRoll,
+  onRoll,
+}: CornerPanelProps) {
+  return (
+    <div
+      className={`corner-panel ${active ? 'panel-active' : ''}`}
+      style={{ '--panel-color': COLORS[color] } as CSSProperties}
+    >
+      {active && <span className="turn-arrow">▼</span>}
+      <span className="avatar">{isBot ? '🤖' : '🙂'}</span>
+      <span className="panel-info">
+        <span className="panel-name">{color.toUpperCase()}</span>
+        <span className="panel-score">🏠 {homeCount}/4</span>
+      </span>
+      <Die
+        value={face}
+        rolling={rolling && active}
+        disabled={!canRoll}
+        inactive={!active}
+        onClick={onRoll}
+      />
+    </div>
   );
 }
 
@@ -371,7 +413,7 @@ function App() {
   const [botSeats, setBotSeats] = useState<Set<PlayerColor>>(new Set());
   const [state, setState] = useState(() => createInitialState());
   const [rolling, setRolling] = useState(false);
-  const [diceFace, setDiceFace] = useState<number | null>(null);
+  const [faces, setFaces] = useState<Partial<Record<PlayerColor, number>>>({});
   const [anim, setAnim] = useState<AnimState | null>(null);
   const [poppingIds, setPoppingIds] = useState<Set<string>>(new Set());
   const [banner, setBanner] = useState<string | null>(null);
@@ -478,17 +520,18 @@ function App() {
 
   const handleRoll = async () => {
     if (busy || state.diceValue !== null || state.winner) return;
+    const roller = state.currentPlayer;
     setRolling(true);
     playSound('dice');
     const record = await providerRef.current.roll(clientSeed);
     const nextCommitment = await providerRef.current.getCommitment();
     let ticks = 0;
     const interval = setInterval(() => {
-      setDiceFace(Math.floor(Math.random() * 6) + 1);
+      setFaces(f => ({ ...f, [roller]: Math.floor(Math.random() * 6) + 1 }));
       ticks++;
       if (ticks >= 6) {
         clearInterval(interval);
-        setDiceFace(record.value);
+        setFaces(f => ({ ...f, [roller]: record.value }));
         setLastRoll(record);
         setCommitment(nextCommitment);
         verifyRoll(record).then(r => setLastRollValid(r.valid));
@@ -535,7 +578,7 @@ function App() {
     setPlayers(seats);
     setBotSeats(bots);
     setState(createInitialState(seats));
-    setDiceFace(null);
+    setFaces({});
     setAnim(null);
     setBanner(null);
     setFeed([]);
@@ -545,7 +588,7 @@ function App() {
     setPlayers(null);
     setAnim(null);
     setBanner(null);
-    setDiceFace(null);
+    setFaces({});
     setFeed([]);
   };
 
@@ -616,31 +659,45 @@ function App() {
         </div>
       )}
 
-      <div className={`board-wrap ${shaking ? 'shake' : ''}`}>
-        <div className="board-frame">
-          <Board
-            tokens={renderTokens}
-            legalMoveIds={legalMoveIds}
-            poppingIds={poppingIds}
-            movingTokenId={anim?.tokenId ?? null}
-            onTokenClick={handleTokenClick}
-          />
-        </div>
-        {players!.map(color => (
-          <div
-            key={color}
-            className={[
-              'plate',
-              `plate-${PLATE_CORNER[color]}`,
-              color === state.currentPlayer && !state.winner ? 'plate-active' : '',
-            ].join(' ')}
-            style={{ '--plate-color': COLORS[color] } as CSSProperties}
-          >
-            <span className="plate-avatar">{botSeats.has(color) ? '🤖' : '🙂'}</span>
-            <span className="plate-name">{color.toUpperCase()}</span>
-            <span className="plate-score">🏠 {homeCounts[color] ?? 0}/4</span>
+      <div className="table">
+        {[TOP_ROW, BOTTOM_ROW].map((rowColors, rowIdx) => (
+          <div className="table-row" key={rowIdx} style={{ order: rowIdx === 0 ? 0 : 2 }}>
+            {rowColors.map(color =>
+              players!.includes(color) ? (
+                <CornerPanel
+                  key={color}
+                  color={color}
+                  isBot={botSeats.has(color)}
+                  active={color === state.currentPlayer && !state.winner}
+                  homeCount={homeCounts[color] ?? 0}
+                  face={faces[color] ?? null}
+                  rolling={rolling}
+                  canRoll={
+                    color === state.currentPlayer &&
+                    !currentIsBot &&
+                    !busy &&
+                    state.diceValue === null &&
+                    !state.winner
+                  }
+                  onRoll={handleRoll}
+                />
+              ) : (
+                <div key={color} className="corner-spacer" />
+              ),
+            )}
           </div>
         ))}
+        <div className={`board-wrap ${shaking ? 'shake' : ''}`} style={{ order: 1 }}>
+          <div className="board-frame">
+            <Board
+              tokens={renderTokens}
+              legalMoveIds={legalMoveIds}
+              poppingIds={poppingIds}
+              movingTokenId={anim?.tokenId ?? null}
+              onTokenClick={handleTokenClick}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="controls">
@@ -655,13 +712,6 @@ function App() {
           </div>
         ) : (
           <>
-            <Die
-              value={diceFace}
-              rolling={rolling}
-              disabled={busy || state.diceValue !== null || currentIsBot}
-              onClick={handleRoll}
-            />
-
             {state.diceValue !== null && !anim && !currentIsBot && legalMoves.length === 0 && (
               <button className="pass-btn" onClick={handlePass}>
                 No legal moves — Pass turn

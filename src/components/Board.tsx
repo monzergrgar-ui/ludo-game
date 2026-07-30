@@ -36,6 +36,18 @@ const PAWN_PATH = [
   'Z',
 ].join(' ');
 
+/**
+ * The last shared-track cell before each color turns into its home column,
+ * with the arrow's pointing direction (0 = right, degrees clockwise).
+ * Ring indices: (START_OFFSET + 51 - 1) % 52 for each color.
+ */
+const ENTRY_ARROWS: { color: PlayerColor; cell: [number, number]; angle: number }[] = [
+  { color: 'red', cell: RING[50], angle: 0 },
+  { color: 'green', cell: RING[11], angle: 90 },
+  { color: 'yellow', cell: RING[24], angle: 180 },
+  { color: 'blue', cell: RING[37], angle: 270 },
+];
+
 interface BoardProps {
   tokens: Token[];
   legalMoveIds: Set<string>;
@@ -96,12 +108,6 @@ export default function Board({
             <stop offset="100%" stopColor={COLOR_DARK[color]} />
           </radialGradient>
         ))}
-        {COLOR_LIST.map(color => (
-          <linearGradient key={`yard-${color}`} id={`yard-${color}`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor={COLORS[color]} />
-            <stop offset="100%" stopColor={COLOR_DARK[color]} />
-          </linearGradient>
-        ))}
         <radialGradient id="ground-shadow">
           <stop offset="0%" stopColor="rgba(0,0,0,0.40)" />
           <stop offset="65%" stopColor="rgba(0,0,0,0.18)" />
@@ -115,35 +121,38 @@ export default function Board({
       {/* base board background */}
       <rect x={0} y={0} width={BOARD_SIZE} height={BOARD_SIZE} className="board-bg" rx={0.35} />
 
-      {/* 4 yards */}
+      {/* 4 yards: flat saturated quadrant, white rounded panel, 2x2 sockets */}
       {COLOR_LIST.map(color => {
         const [row, col] = YARD_ORIGIN[color];
         return (
           <g key={color}>
-            <rect x={col} y={row} width={6} height={6} fill={`url(#yard-${color})`} rx={0.35} />
-            <rect x={col + 0.9} y={row + 0.9} width={4.2} height={4.2} className="yard-inner" rx={0.3} />
-            {/* token parking slots */}
+            <rect x={col} y={row} width={6} height={6} fill={COLORS[color]} rx={0.35} />
+            <rect x={col + 0.75} y={row + 0.75} width={4.5} height={4.5} className="yard-inner" rx={0.45} />
+            {/* white circular token sockets */}
             {BASE_SLOTS[color].map(([r, c], i) => (
-              <circle
-                key={i}
-                cx={c}
-                cy={r}
-                r={0.42}
-                fill="#fff"
-                stroke={COLOR_DARK[color]}
-                strokeWidth={0.06}
-                filter="url(#cell-inset)"
-              />
+              <g key={i}>
+                <circle cx={c} cy={r} r={0.5} fill={COLORS[color]} opacity={0.18} />
+                <circle
+                  cx={c}
+                  cy={r}
+                  r={0.46}
+                  fill="#fff"
+                  stroke="#d9d4c9"
+                  strokeWidth={0.04}
+                  filter="url(#cell-inset)"
+                />
+              </g>
             ))}
           </g>
         );
       })}
 
-      {/* center pinwheel (home triangles) */}
-      <polygon points="6,6 6,9 7.5,7.5" fill={'url(#yard-red)'} stroke="#fff" strokeWidth={0.04} />
-      <polygon points="6,6 9,6 7.5,7.5" fill={'url(#yard-green)'} stroke="#fff" strokeWidth={0.04} />
-      <polygon points="9,6 9,9 7.5,7.5" fill={'url(#yard-yellow)'} stroke="#fff" strokeWidth={0.04} />
-      <polygon points="6,9 9,9 7.5,7.5" fill={'url(#yard-blue)'} stroke="#fff" strokeWidth={0.04} />
+      {/* center 4-triangle goal */}
+      <rect x={6} y={6} width={3} height={3} fill="#fffdf7" />
+      <polygon points="6,6 6,9 7.5,7.5" fill={COLORS.red} stroke="#fff" strokeWidth={0.05} />
+      <polygon points="6,6 9,6 7.5,7.5" fill={COLORS.green} stroke="#fff" strokeWidth={0.05} />
+      <polygon points="9,6 9,9 7.5,7.5" fill={COLORS.yellow} stroke="#fff" strokeWidth={0.05} />
+      <polygon points="6,9 9,9 7.5,7.5" fill={COLORS.blue} stroke="#fff" strokeWidth={0.05} />
 
       {/* home stretch lanes — full player color */}
       {COLOR_LIST.map(color =>
@@ -181,6 +190,19 @@ export default function Board({
           </g>
         );
       })}
+
+      {/* entry arrows: the last ring cell before each color's home column */}
+      {ENTRY_ARROWS.map(({ color, cell: [row, col], angle }) => (
+        <polygon
+          key={`arrow-${color}`}
+          points={`${col + 0.26},${row + 0.28} ${col + 0.26},${row + 0.72} ${col + 0.78},${row + 0.5}`}
+          fill={COLORS[color]}
+          stroke={COLOR_DARK[color]}
+          strokeWidth={0.025}
+          strokeLinejoin="round"
+          transform={`rotate(${angle} ${col + 0.5} ${row + 0.5})`}
+        />
+      ))}
 
       {/* pawns */}
       {sortedTokens.map(token => {
