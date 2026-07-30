@@ -51,16 +51,76 @@ body {
   background: rgba(0, 0, 0, 0.4);
 }
 
-.music-btn {
-  top: 64px;
-  font-size: 21px;
-  color: #fff;
-  transition: opacity 0.25s ease-out;
+/* --- settings panel --- */
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(5, 12, 28, 0.6);
+  animation: overlay-in 0.25s ease-out;
 }
 
-.music-btn.off {
-  opacity: 0.4;
-  text-decoration: line-through;
+.settings-panel {
+  width: min(420px, 100%);
+  max-height: 88svh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #1c3055, #101f3c);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  text-align: left;
+  animation: panel-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.settings-panel h2 {
+  margin: 0;
+  color: #fff;
+  font-size: 22px;
+  text-align: center;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-label {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #fff;
+  font-size: 14.5px;
+  cursor: pointer;
+}
+
+.settings-row input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.settings-row small {
+  display: block;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .turn-indicator {
@@ -368,25 +428,15 @@ body {
   50% { transform: scale(0.85) rotate(2.5deg); }
 }
 
-/* landing: squash on impact, bounce, settle */
+/* landing: a quick scale punch in place — no travel, no residual tilt */
 .die-land {
-  animation: die-land 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: die-land 0.12s ease-out;
 }
 
 @keyframes die-land {
-  0% { transform: translateY(-10px) scale(1.05, 0.95); }
-  40% { transform: translateY(2px) scale(1.18, 0.78); }
-  70% { transform: translateY(-3px) scale(0.94, 1.08); }
-  100% { transform: translateY(0) scale(1); }
-}
-
-.die-land .die-face {
-  animation: face-punch 0.3s ease-out;
-}
-
-@keyframes face-punch {
-  0% { scale: 1.35; }
-  100% { scale: 1; }
+  0% { transform: scale(1); }
+  45% { transform: scale(1.12); }
+  100% { transform: scale(1); }
 }
 
 .die:disabled {
@@ -398,43 +448,30 @@ body {
   filter: brightness(0.45) saturate(0.5);
 }
 
+/* SVG face keeps the pips on an exactly centered 3x3 grid at any size */
 .die-face {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(3, 1fr);
+  display: block;
   width: 100%;
   height: 100%;
-  padding: 6px;
+  padding: 14%;
   box-sizing: border-box;
+  overflow: visible;
 }
 
 .pip {
-  align-self: center;
-  justify-self: center;
-  width: 6.5px;
-  height: 6.5px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #4a4a4a, #0c0c0c 70%);
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.8),
-    0 1px 0 rgba(255, 255, 255, 0.7);
-  opacity: 0;
+  fill: #141414;
 }
 
-.pip.on {
-  opacity: 1;
-}
-
+/* rolling: shakes in place only — a small wobble plus a scale pulse.
+   Deliberately no translation, no rotate3d, no perspective travel. */
 .die-tumble {
-  animation: die-tumble 0.46s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  animation: die-shake 0.16s ease-in-out infinite;
 }
 
-@keyframes die-tumble {
-  0% { transform: translateY(0) rotate3d(1, 1, 0, 0deg); }
-  25% { transform: translateY(-14px) rotate3d(1, 1, 0, 95deg); }
-  50% { transform: translateY(-4px) rotate3d(1, -1, 0.3, 190deg); }
-  75% { transform: translateY(-10px) rotate3d(-1, 1, 0, 280deg); }
-  100% { transform: translateY(0) rotate3d(1, 1, 0, 360deg); }
+@keyframes die-shake {
+  0% { transform: rotate(-8deg) scale(1); }
+  50% { transform: rotate(8deg) scale(1.06); }
+  100% { transform: rotate(-8deg) scale(1); }
 }
 
 .pass-btn {
@@ -465,14 +502,6 @@ body {
   text-decoration: underline;
 }
 
-.auto-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 13px;
-  cursor: pointer;
-}
 
 /* --- win confetti --- */
 
@@ -863,12 +892,7 @@ body {
   }
 
   .die-face {
-    padding: 5px;
-  }
-
-  .pip {
-    width: 5.5px;
-    height: 5.5px;
+    padding: 13%;
   }
 
   .commentary-latest {

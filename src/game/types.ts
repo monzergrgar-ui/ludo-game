@@ -7,9 +7,27 @@ export interface Token {
   position: number;
 }
 
+/** Optional non-standard rules. All off by default. */
+export interface HouseRules {
+  /** Ignoring an available capture sends your leading token back to base. */
+  mandatoryCapture: boolean;
+  /** First token home wins, instead of all four. */
+  quickMode: boolean;
+  /** A third consecutive 6 also sends your leading token back to base. */
+  threeSixesSendsLeaderToBase: boolean;
+}
+
 export type LastAction =
-  | { type: 'move'; tokenId: string; from: number; to: number; captured: string[] }
-  | { type: 'forfeitSixes'; player: PlayerColor }
+  | {
+      type: 'move';
+      tokenId: string;
+      from: number;
+      to: number;
+      captured: string[];
+      /** Token sent to base by the mandatory-capture house rule, if any. */
+      penalizedTokenId?: string;
+    }
+  | { type: 'forfeitSixes'; player: PlayerColor; penalizedTokenId?: string }
   | { type: 'pass'; player: PlayerColor }
   | null;
 
@@ -24,4 +42,6 @@ export interface GameState {
   consecutiveSixes: number;
   /** last thing that happened, for UI messages/animations */
   lastAction: LastAction;
+  /** active optional rules */
+  rules: HouseRules;
 }

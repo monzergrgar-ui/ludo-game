@@ -1,4 +1,11 @@
-import type { GameState, Token, PlayerColor } from './types';
+import type { GameState, Token, PlayerColor, HouseRules } from './types';
+
+/** Standard Ludo: every optional rule off. */
+export const DEFAULT_RULES: HouseRules = {
+  mandatoryCapture: false,
+  quickMode: false,
+  threeSixesSendsLeaderToBase: false,
+};
 
 /** Isolated on purpose — swap this out for a provably-fair implementation later. */
 export function rollDice(): number {
@@ -7,7 +14,10 @@ export function rollDice(): number {
 
 const colors: PlayerColor[] = ['red', 'green', 'yellow', 'blue'];
 
-export function createInitialState(players: PlayerColor[] = colors): GameState {
+export function createInitialState(
+  players: PlayerColor[] = colors,
+  rules: HouseRules = DEFAULT_RULES,
+): GameState {
   const tokens: Token[] = [];
   for (const color of players) {
     for (let i = 0; i < 4; i++) {
@@ -22,6 +32,7 @@ export function createInitialState(players: PlayerColor[] = colors): GameState {
     winner: null,
     consecutiveSixes: 0,
     lastAction: null,
+    rules,
   };
 }
 
@@ -85,6 +96,42 @@ export function getLegalMoves(state: GameState, dice: number): Token[] {
   return state.tokens.filter(t => t.color === state.currentPlayer && canMove(state, t, dice));
 }
 
+/** Where a token ends up for a dice value (base exit is always square 1). */
+function destinationOf(token: Token, dice: number): number {
+  return token.position === -1 ? 1 : token.position + dice;
+}
+
+/** Legal moves that would capture at least one opponent token. */
+export function getCapturingMoves(state: GameState, dice: number): Token[] {
+  return getLegalMoves(state, dice).filter(token => {
+    const dest = destinationOf(token, dice);
+    if (dest < 1 || dest > 51) return false;
+    const global = getGlobalPosition(token.color, dest);
+    if (global === null || SAFE_SQUARES.includes(global)) return false;
+    return state.tokens.some(
+      other =>
+        other.color !== token.color &&
+        other.position >= 1 &&
+        other.position <= 51 &&
+        getGlobalPosition(other.color, other.position) === global,
+    );
+  });
+}
+
+/**
+ * A player's most advanced token that is still in play — used by the house
+ * rules that send the "leading token" back to base. Finished tokens (58) and
+ * tokens already in base are never eligible.
+ */
+export function getLeadingToken(tokens: Token[], color: PlayerColor): Token | null {
+  let leader: Token | null = null;
+  for (const t of tokens) {
+    if (t.color !== color || t.position < 1 || t.position >= 58) continue;
+    if (!leader || t.position > leader.position) leader = t;
+  }
+  return leader;
+}
+
 function getNextPlayer(state: GameState): PlayerColor {
   const { players, currentPlayer } = state;
   return players[(players.indexOf(currentPlayer) + 1) % players.length];
@@ -100,12 +147,24 @@ export function registerDiceRoll(state: GameState, dice: number): GameState {
   }
   const consecutiveSixes = state.consecutiveSixes + 1;
   if (consecutiveSixes >= 3) {
+    // The third 6 is forfeited and the turn ends. House rule optionally adds
+    // a penalty: the player's leading token also goes back to base.
+    let tokens = state.tokens;
+    let penalizedTokenId: string | undefined;
+    if (state.rules.threeSixesSendsLeaderToBase) {
+      const leader = getLeadingToken(tokens, state.currentPlayer);
+      if (leader) {
+        penalizedTokenId = leader.id;
+        tokens = tokens.map(t => (t.id === leader.id ? { ...t, position: -1 } : t));
+      }
+    }
     return {
       ...state,
+      tokens,
       diceValue: null,
       consecutiveSixes: 0,
       currentPlayer: getNextPlayer(state),
-      lastAction: { type: 'forfeitSixes', player: state.currentPlayer },
+      lastAction: { type: 'forfeitSixes', player: state.currentPlayer, penalizedTokenId },
     };
   }
   return { ...state, diceValue: dice, consecutiveSixes };
@@ -123,6 +182,11 @@ export function passTurn(state: GameState): GameState {
 }
 
 export function applyMove(state: GameState, tokenId: string, dice: number): GameState {
+  // Checked before the move: the mandatory-capture house rule punishes passing
+  // up an available capture.
+  const captureWasAvailable =
+    state.rules.mandatoryCapture && getCapturingMoves(state, dice).length > 0;
+
   const tokens = state.tokens.map(t => ({ ...t }));
   const token = tokens.find(t => t.id === tokenId)!;
   const from = token.position;
@@ -146,7 +210,22 @@ export function applyMove(state: GameState, tokenId: string, dice: number): Game
     }
   }
 
-  const winner = tokens.filter(t => t.color === token.color).every(t => t.position === 58)
+  // Mandatory capture: a capture was on offer but this move didn't take it.
+  let penalizedTokenId: string | undefined;
+  if (captureWasAvailable && captured.length === 0) {
+    const leader = getLeadingToken(tokens, token.color);
+    if (leader) {
+      penalizedTokenId = leader.id;
+      leader.position = -1;
+    }
+  }
+
+  const own = tokens.filter(t => t.color === token.color);
+  const winner = (
+    state.rules.quickMode
+      ? own.some(t => t.position === 58)
+      : own.every(t => t.position === 58)
+  )
     ? token.color
     : null;
 
@@ -159,6 +238,6 @@ export function applyMove(state: GameState, tokenId: string, dice: number): Game
     currentPlayer: extraTurn ? state.currentPlayer : getNextPlayer(state),
     diceValue: null,
     winner,
-    lastAction: { type: 'move', tokenId, from, to: token.position, captured },
+    lastAction: { type: 'move', tokenId, from, to: token.position, captured, penalizedTokenId },
   };
 }

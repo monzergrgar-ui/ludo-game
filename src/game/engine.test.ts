@@ -6,9 +6,12 @@ import {
   applyMove,
   registerDiceRoll,
   passTurn,
+  getCapturingMoves,
+  getLeadingToken,
   SAFE_SQUARES,
+  START_OFFSET,
 } from './engine';
-import type { GameState } from './types';
+import type { GameState, HouseRules } from './types';
 
 /** Mutates a token's position in place — test setup convenience. */
 function setPos(state: GameState, id: string, pos: number) {
@@ -154,6 +157,192 @@ describe('extra turns', () => {
     setPos(state, 'red-0', 10);
     const result = applyMove(state, 'red-0', 3);
     expect(result.currentPlayer).toBe('green');
+  });
+});
+
+describe('rule conformance', () => {
+  it('a blockade cannot be captured, only avoided', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 1);
+    setPos(state, 'green-0', 44); // global 4 — an unsafe square
+    setPos(state, 'green-1', 44);
+
+    // The square is reachable in principle, but the block makes it illegal,
+    // so there is no way to capture the pair.
+    expect(getLegalMoves(state, 4).map(t => t.id)).not.toContain('red-0');
+    expect(getCapturingMoves(state, 4)).toHaveLength(0);
+  });
+
+  it("a player's own blockade does not block their own tokens", () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 1);
+    setPos(state, 'red-1', 5);
+    setPos(state, 'red-2', 5); // red's own pair sits on red's path
+
+    expect(getLegalMoves(state, 6).map(t => t.id)).toContain('red-0');
+  });
+
+  it('every coloured start square is a safe square', () => {
+    for (const offset of Object.values(START_OFFSET)) {
+      expect(SAFE_SQUARES).toContain(offset);
+    }
+  });
+
+  it('a token standing on a start square cannot be captured', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 9);
+    setPos(state, 'green-0', 40); // global 13 = green's own start square
+
+    expect(SAFE_SQUARES).toContain(13);
+    const result = applyMove(state, 'red-0', 5); // red lands rel 14 = global 13
+    expect(result.tokens.find(t => t.id === 'green-0')!.position).toBe(40);
+  });
+
+  it('overshooting home makes that token illegal but leaves others playable', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 57); // needs exactly 1
+    setPos(state, 'red-1', 20);
+
+    const legal = getLegalMoves(state, 3).map(t => t.id);
+    expect(legal).not.toContain('red-0');
+    expect(legal).toContain('red-1');
+  });
+
+  it('getLeadingToken picks the furthest token still in play', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 12);
+    setPos(state, 'red-1', 40);
+    setPos(state, 'red-2', 58); // finished — never the "leader"
+    expect(getLeadingToken(state.tokens, 'red')!.id).toBe('red-1');
+
+    setPos(state, 'red-0', -1);
+    setPos(state, 'red-1', -1);
+    setPos(state, 'red-3', -1);
+    expect(getLeadingToken(state.tokens, 'red')).toBeNull();
+  });
+});
+
+describe('house rules', () => {
+  const withRules = (overrides: Partial<HouseRules>): GameState =>
+    createInitialState(undefined, {
+      mandatoryCapture: false,
+      quickMode: false,
+      threeSixesSendsLeaderToBase: false,
+      ...overrides,
+    });
+
+  it('are all off by default', () => {
+    expect(createInitialState().rules).toEqual({
+      mandatoryCapture: false,
+      quickMode: false,
+      threeSixesSendsLeaderToBase: false,
+    });
+  });
+
+  it('quick mode: the first token home wins', () => {
+    const state = withRules({ quickMode: true });
+    setPos(state, 'red-0', 56);
+    const result = applyMove(state, 'red-0', 2);
+    expect(result.winner).toBe('red');
+  });
+
+  it('without quick mode the same move does not win', () => {
+    const state = withRules({});
+    setPos(state, 'red-0', 56);
+    expect(applyMove(state, 'red-0', 2).winner).toBeNull();
+  });
+
+  it('mandatory capture: ignoring a capture sends the leading token to base', () => {
+    const state = withRules({ mandatoryCapture: true });
+    setPos(state, 'red-0', 1); // with a 4 this captures green-0
+    setPos(state, 'red-1', 30); // the leading token
+    setPos(state, 'green-0', 44);
+
+    expect(getCapturingMoves(state, 4).map(t => t.id)).toEqual(['red-0']);
+
+    const result = applyMove(state, 'red-1', 4); // declines the capture
+    expect(result.tokens.find(t => t.id === 'red-1')!.position).toBe(-1);
+    expect(result.lastAction).toMatchObject({ penalizedTokenId: 'red-1' });
+  });
+
+  it('mandatory capture: taking the capture carries no penalty', () => {
+    const state = withRules({ mandatoryCapture: true });
+    setPos(state, 'red-0', 1);
+    setPos(state, 'red-1', 30);
+    setPos(state, 'green-0', 44);
+
+    const result = applyMove(state, 'red-0', 4);
+    expect(result.tokens.find(t => t.id === 'red-1')!.position).toBe(30);
+    expect(result.tokens.find(t => t.id === 'green-0')!.position).toBe(-1);
+  });
+
+  it('mandatory capture is inert when no capture was on offer', () => {
+    const state = withRules({ mandatoryCapture: true });
+    setPos(state, 'red-0', 30);
+    const result = applyMove(state, 'red-0', 3);
+    expect(result.tokens.find(t => t.id === 'red-0')!.position).toBe(33);
+    expect((result.lastAction as { penalizedTokenId?: string }).penalizedTokenId).toBeUndefined();
+  });
+
+  it('three-sixes penalty sends the leading token to base as well', () => {
+    let state = withRules({ threeSixesSendsLeaderToBase: true });
+    setPos(state, 'red-0', 30);
+
+    state = registerDiceRoll(state, 6);
+    state = registerDiceRoll({ ...state, diceValue: null }, 6);
+    state = registerDiceRoll({ ...state, diceValue: null }, 6);
+
+    expect(state.tokens.find(t => t.id === 'red-0')!.position).toBe(-1);
+    expect(state.lastAction).toMatchObject({ type: 'forfeitSixes', penalizedTokenId: 'red-0' });
+    expect(state.currentPlayer).toBe('green');
+  });
+
+  it('without the penalty rule three sixes only forfeits the turn', () => {
+    let state = withRules({});
+    setPos(state, 'red-0', 30);
+
+    state = registerDiceRoll(state, 6);
+    state = registerDiceRoll({ ...state, diceValue: null }, 6);
+    state = registerDiceRoll({ ...state, diceValue: null }, 6);
+
+    expect(state.tokens.find(t => t.id === 'red-0')!.position).toBe(30);
+    expect(state.currentPlayer).toBe('green');
+  });
+});
+
+describe('extra-turn chains keep re-evaluating legal moves', () => {
+  // Regression guard for the auto-move bug: the single-legal-move check must
+  // stay correct on the third (and later) roll of one extra-turn chain, not
+  // just the first.
+  it('reports exactly one legal move on every roll of a 3-deep chain', () => {
+    let state = createInitialState();
+    setPos(state, 'red-0', 52);
+    setPos(state, 'red-1', 53);
+    setPos(state, 'red-2', 54);
+    setPos(state, 'red-3', 58);
+
+    // Roll 1 of the chain: only red-0 can land exactly on 58.
+    state = registerDiceRoll(state, 6);
+    expect(state.diceValue).toBe(6);
+    let legal = getLegalMoves(state, 6);
+    expect(legal.map(t => t.id)).toEqual(['red-0']);
+    state = applyMove(state, 'red-0', 6);
+    expect(state.currentPlayer).toBe('red'); // extra turn for reaching home
+
+    // Roll 2 of the same chain.
+    state = registerDiceRoll(state, 5);
+    legal = getLegalMoves(state, 5);
+    expect(legal.map(t => t.id)).toEqual(['red-1']);
+    state = applyMove(state, 'red-1', 5);
+    expect(state.currentPlayer).toBe('red');
+
+    // Roll 3 of the same chain — the case that used to leave the player stuck.
+    state = registerDiceRoll(state, 4);
+    legal = getLegalMoves(state, 4);
+    expect(legal.map(t => t.id)).toEqual(['red-2']);
+    state = applyMove(state, 'red-2', 4);
+
+    expect(state.winner).toBe('red');
   });
 });
 

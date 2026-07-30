@@ -6,11 +6,9 @@
 
 export interface SoundSettings {
   muted: boolean;
-  /** Ambient music has its own toggle, independent of SFX. */
-  musicMuted: boolean;
 }
 
-export const soundSettings: SoundSettings = { muted: false, musicMuted: false };
+export const soundSettings: SoundSettings = { muted: false };
 
 export type SoundName = 'dice' | 'step' | 'capture' | 'home' | 'win' | 'turn' | 'unlucky';
 
@@ -24,16 +22,16 @@ function getCtx(): AudioContext | null {
 }
 
 // Autoplay policies keep the context suspended until a user gesture; unlock on
-// the first pointer interaction anywhere (and kick the music loop off then).
+// the first pointer interaction anywhere.
 if (typeof document !== 'undefined') {
-  document.addEventListener(
-    'pointerdown',
-    () => {
-      void getCtx();
-      ensureMusic();
-    },
-    { once: true },
-  );
+  document.addEventListener('pointerdown', () => void getCtx(), { once: true });
+
+  // Installed PWAs get backgrounded and resumed constantly, and the audio
+  // context is suspended while hidden. Resume it when the app comes back so
+  // the first tap after switching apps still makes a sound.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && ctx?.state === 'suspended') void ctx.resume();
+  });
 }
 
 /** Best-effort haptics on devices that support it. */
@@ -89,12 +87,12 @@ function noiseBurst(
 }
 
 const effects: Record<SoundName, (ac: AudioContext) => void> = {
-  /** Rattling die: a scatter of filtered clicks. */
+  /** Rattling die: a scatter of filtered clicks, finished inside 500ms. */
   dice(ac) {
     for (let i = 0; i < 7; i++) {
       noiseBurst(ac, {
-        at: i * 0.07 + Math.random() * 0.02,
-        dur: 0.035,
+        at: i * 0.055 + Math.random() * 0.015,
+        dur: 0.03,
         gain: 0.1,
         filterFreq: 1800 + Math.random() * 2200,
       });
@@ -150,55 +148,3 @@ export function playSound(name: SoundName) {
   }
 }
 
-/* --- ambient background loop: a soft, slow synth pad --- */
-
-// Gentle I-vi-IV-V progression as low triads (C, Am, F, G).
-const MUSIC_CHORDS: number[][] = [
-  [130.81, 164.81, 196.0],
-  [110.0, 130.81, 164.81],
-  [87.31, 130.81, 174.61],
-  [98.0, 146.83, 196.0],
-];
-const CHORD_SECONDS = 2.6;
-let chordIdx = 0;
-let musicTimer: ReturnType<typeof setTimeout> | null = null;
-
-function musicTick() {
-  musicTimer = null;
-  if (soundSettings.muted || soundSettings.musicMuted) return; // ensureMusic restarts it
-  const ac = getCtx();
-  if (!ac || ac.state !== 'running') {
-    musicTimer = setTimeout(musicTick, 500);
-    return;
-  }
-  const chord = MUSIC_CHORDS[chordIdx % MUSIC_CHORDS.length];
-  chordIdx++;
-  const start = ac.currentTime;
-  for (const f of chord) {
-    const osc = ac.createOscillator();
-    const g = ac.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = f * 2; // an octave up keeps the pad airy
-    g.gain.setValueAtTime(0.0001, start);
-    g.gain.linearRampToValueAtTime(0.014, start + 1.0);
-    g.gain.linearRampToValueAtTime(0.0001, start + CHORD_SECONDS + 0.3);
-    osc.connect(g).connect(ac.destination);
-    osc.start(start);
-    osc.stop(start + CHORD_SECONDS + 0.4);
-  }
-  // soft bass root under the pad
-  tone(ac, chord[0] / 2, { dur: CHORD_SECONDS, type: 'sine', gain: 0.02 });
-  musicTimer = setTimeout(musicTick, CHORD_SECONDS * 1000);
-}
-
-/** Starts the ambient loop if it should be playing and isn't already. */
-export function ensureMusic() {
-  if (musicTimer === null && !soundSettings.muted && !soundSettings.musicMuted) {
-    musicTick();
-  }
-}
-
-export function setMusicMuted(muted: boolean) {
-  soundSettings.musicMuted = muted;
-  if (!muted) ensureMusic();
-}

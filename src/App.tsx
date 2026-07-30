@@ -16,7 +16,7 @@ import {
   type FairRollRecord,
 } from './game/fairness';
 import { ruleBasedBot } from './game/bot';
-import { playSound, soundSettings, setMusicMuted, ensureMusic, vibrate } from './game/sound';
+import { playSound, soundSettings, vibrate } from './game/sound';
 import {
   getCommentaryLine,
   isUnderThreat,
@@ -24,7 +24,8 @@ import {
   type CommentaryEvent,
 } from './game/commentary';
 import { COLORS, getTokenCell } from './game/board';
-import type { PlayerColor, Token } from './game/types';
+import { DEFAULT_RULES } from './game/engine';
+import type { PlayerColor, Token, HouseRules } from './game/types';
 import './App.css';
 
 /** Seat sets per player count — 2 players sit on opposite corners. */
@@ -45,6 +46,14 @@ interface AnimState {
   step: number;
 }
 
+type GameSpeed = 'normal' | 'fast';
+
+/** Animation/pacing delays in ms, per speed setting. */
+const SPEED_PRESETS: Record<GameSpeed, { step: number; autoMove: number; botRoll: number; botMove: number }> = {
+  normal: { step: 180, autoMove: 400, botRoll: 650, botMove: 600 },
+  fast: { step: 95, autoMove: 220, botRoll: 320, botMove: 300 },
+};
+
 /** Zoom focus point for the win sequence: each winner's yard corner. */
 const ZOOM_ORIGIN: Record<PlayerColor, string> = {
   red: '18% 18%',
@@ -55,14 +64,28 @@ const ZOOM_ORIGIN: Record<PlayerColor, string> = {
 
 /* --- 3D-look die with proper pips --- */
 
-const PIP_LAYOUT: Record<number, number[]> = {
-  1: [4],
-  2: [0, 8],
-  3: [0, 4, 8],
-  4: [0, 2, 6, 8],
-  5: [0, 2, 4, 6, 8],
-  6: [0, 2, 3, 5, 6, 8],
+/**
+ * Standard die-face pip coordinates on a 100x100 face. Drawn as SVG so the
+ * dots stay exactly aligned on a centered 3x3 grid at any die size (a CSS
+ * grid of small dots picks up subpixel rounding at these sizes).
+ */
+const PL = 28; // left column / top row
+const PM = 50; // centre
+const PR = 72; // right column / bottom row
+const PIP_POSITIONS: Record<number, [number, number][]> = {
+  1: [[PM, PM]],
+  2: [[PL, PL], [PR, PR]],
+  3: [[PL, PL], [PM, PM], [PR, PR]],
+  4: [[PL, PL], [PR, PL], [PL, PR], [PR, PR]],
+  5: [[PL, PL], [PR, PL], [PM, PM], [PL, PR], [PR, PR]],
+  6: [[PL, PL], [PR, PL], [PL, PM], [PR, PM], [PL, PR], [PR, PR]],
 };
+
+/**
+ * Face-change schedule for one roll — 500ms total, in place. Faces swap every
+ * 50ms through the first 350ms, then slow to a 100ms beat before landing.
+ */
+const DICE_TICK_DELAYS = [50, 50, 50, 50, 50, 50, 50, 100, 50];
 
 interface DieProps {
   value: number | null;
@@ -71,12 +94,10 @@ interface DieProps {
   inactive: boolean;
   /** Squash-bounce + face punch right after the roll settles. */
   landing: boolean;
-  /** Small random resting rotation so no two rolls look identical. */
-  restDeg: number;
   onClick: () => void;
 }
 
-function Die({ value, rolling, disabled, inactive, landing, restDeg, onClick }: DieProps) {
+function Die({ value, rolling, disabled, inactive, landing, onClick }: DieProps) {
   const face = value ?? 6;
   return (
     <button
@@ -87,14 +108,11 @@ function Die({ value, rolling, disabled, inactive, landing, restDeg, onClick }: 
       disabled={disabled}
       aria-label="Roll the die"
     >
-      <span
-        className="die-face"
-        style={{ transform: rolling ? undefined : `rotate(${restDeg}deg)` }}
-      >
-        {Array.from({ length: 9 }, (_, i) => (
-          <span key={i} className={`pip ${PIP_LAYOUT[face].includes(i) ? 'on' : ''}`} />
+      <svg className="die-face" viewBox="0 0 100 100" aria-hidden="true">
+        {PIP_POSITIONS[face].map(([cx, cy], i) => (
+          <circle key={i} cx={cx} cy={cy} r={9} className="pip" />
         ))}
-      </span>
+      </svg>
     </button>
   );
 }
@@ -110,7 +128,6 @@ interface CornerPanelProps {
   rolling: boolean;
   canRoll: boolean;
   dieLanding: boolean;
-  dieRestDeg: number;
   onRoll: () => void;
 }
 
@@ -123,7 +140,6 @@ function CornerPanel({
   rolling,
   canRoll,
   dieLanding,
-  dieRestDeg,
   onRoll,
 }: CornerPanelProps) {
   return (
@@ -143,7 +159,6 @@ function CornerPanel({
         disabled={!canRoll}
         inactive={!active}
         landing={dieLanding && active}
-        restDeg={dieRestDeg}
         onClick={onRoll}
       />
     </div>
@@ -181,6 +196,113 @@ function Confetti() {
           }}
         />
       ))}
+    </div>
+  );
+}
+
+/* --- settings panel --- */
+
+interface SettingsPanelProps {
+  speed: GameSpeed;
+  onSpeedChange: (s: GameSpeed) => void;
+  muted: boolean;
+  onMutedChange: (m: boolean) => void;
+  autoMoveSingles: boolean;
+  onAutoMoveChange: (v: boolean) => void;
+  rules: HouseRules;
+  onRulesChange: (r: HouseRules) => void;
+  onClose: () => void;
+}
+
+const HOUSE_RULE_LABELS: { key: keyof HouseRules; label: string; hint: string }[] = [
+  {
+    key: 'mandatoryCapture',
+    label: 'Mandatory capture',
+    hint: 'Skip an available capture and your leading token goes back to base.',
+  },
+  {
+    key: 'quickMode',
+    label: 'Quick mode',
+    hint: 'First token home wins, instead of all four.',
+  },
+  {
+    key: 'threeSixesSendsLeaderToBase',
+    label: 'Three sixes penalty',
+    hint: 'A third consecutive 6 also sends your leading token back to base.',
+  },
+];
+
+function SettingsPanel({
+  speed,
+  onSpeedChange,
+  muted,
+  onMutedChange,
+  autoMoveSingles,
+  onAutoMoveChange,
+  rules,
+  onRulesChange,
+  onClose,
+}: SettingsPanelProps) {
+  return (
+    <div className="settings-backdrop" onClick={onClose}>
+      <div className="settings-panel" onClick={e => e.stopPropagation()}>
+        <h2>Settings</h2>
+
+        <div className="settings-group">
+          <p className="settings-label">Game speed</p>
+          <div className="setup-counts">
+            {(['normal', 'fast'] as GameSpeed[]).map(s => (
+              <button
+                key={s}
+                className={`count-btn ${speed === s ? 'selected' : ''}`}
+                onClick={() => onSpeedChange(s)}
+              >
+                {s === 'normal' ? 'Normal' : 'Fast'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <label className="settings-row">
+            <input
+              type="checkbox"
+              checked={!muted}
+              onChange={e => onMutedChange(!e.target.checked)}
+            />
+            <span>Sound effects</span>
+          </label>
+          <label className="settings-row">
+            <input
+              type="checkbox"
+              checked={autoMoveSingles}
+              onChange={e => onAutoMoveChange(e.target.checked)}
+            />
+            <span>Auto-move single options</span>
+          </label>
+        </div>
+
+        <div className="settings-group">
+          <p className="settings-label">House rules</p>
+          {HOUSE_RULE_LABELS.map(({ key, label, hint }) => (
+            <label key={key} className="settings-row">
+              <input
+                type="checkbox"
+                checked={rules[key]}
+                onChange={e => onRulesChange({ ...rules, [key]: e.target.checked })}
+              />
+              <span>
+                {label}
+                <small>{hint}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+
+        <button className="start-btn" onClick={onClose}>
+          Done
+        </button>
+      </div>
     </div>
   );
 }
@@ -443,17 +565,37 @@ function App() {
   const [shaking, setShaking] = useState(false);
   const [feed, setFeed] = useState<string[]>([]);
   const [muted, setMuted] = useState(soundSettings.muted);
-  const [musicOn, setMusicOn] = useState(!soundSettings.musicMuted);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [speed, setSpeed] = useState<GameSpeed>('normal');
+  const [rules, setRules] = useState<HouseRules>(DEFAULT_RULES);
   // juice state
   const [flights, setFlights] = useState<Map<string, { dx: number; dy: number }>>(new Map());
   const [hitstop, setHitstop] = useState(false);
   const [landedId, setLandedId] = useState<string | null>(null);
   const [homedId, setHomedId] = useState<string | null>(null);
   const [dieLanding, setDieLanding] = useState(false);
-  const [dieRestDeg, setDieRestDeg] = useState(0);
   const [winStage, setWinStage] = useState(0); // 0 idle, 1 zoom, 2 confetti, 3 panel
   const [autoMoveSingles, setAutoMoveSingles] = useState(true);
   const pendingRollAt = useRef<number | null>(null);
+
+  /**
+   * Bumped once per completed dice roll. Everything that must react to *every*
+   * roll — however deep into an extra-turn chain — keys off this rather than
+   * object identity, so a re-render can never swallow a roll.
+   */
+  const [rollSeq, setRollSeq] = useState(0);
+  /** Latest-value refs: timers and async callbacks read these, never closures. */
+  const stateRef = useRef(state);
+  const animRef = useRef(anim);
+  /** Guards against two roll chains running at once (double registerDiceRoll). */
+  const rollingRef = useRef(false);
+  /** rollSeq an auto-move has already been scheduled for. */
+  const autoScheduledRef = useRef(-1);
+  /** Last movement step a tick sound was played for. */
+  const lastTickRef = useRef<string | null>(null);
+
+  stateRef.current = state;
+  animRef.current = anim;
 
   // Provably-fair dice: simulated server + commitment/reveal bookkeeping.
   const providerRef = useRef(new SimulatedFairnessServer());
@@ -472,16 +614,19 @@ function App() {
     setFeed(f => [getCommentaryLine(event), ...f].slice(0, 3));
   };
 
-  const toggleMute = () => {
-    soundSettings.muted = !soundSettings.muted;
-    setMuted(soundSettings.muted);
-    if (!soundSettings.muted) ensureMusic();
+  const applyMuted = (m: boolean) => {
+    soundSettings.muted = m;
+    setMuted(m);
   };
 
-  const toggleMusic = () => {
-    setMusicMuted(musicOn); // musicOn is the previous state here
-    setMusicOn(!musicOn);
+  // House rules live on the game state so the engine can consult them; keep
+  // the two in sync when they're changed from the settings panel.
+  const applyRules = (next: HouseRules) => {
+    setRules(next);
+    setState(s => ({ ...s, rules: next }));
   };
+
+  const timings = SPEED_PRESETS[speed];
 
   // Step the currently-moving token through its path one cell at a time.
   // State is applied the moment the hop sequence ends — decorative effects
@@ -552,12 +697,12 @@ function App() {
       setAnim(null);
       return;
     }
-    const timer = setTimeout(() => {
-      playSound('step');
-      setAnim(a => (a ? { ...a, step: a.step + 1 } : null));
-    }, 180);
+    const timer = setTimeout(
+      () => setAnim(a => (a ? { ...a, step: a.step + 1 } : null)),
+      timings.step,
+    );
     return () => clearTimeout(timer);
-  }, [anim, state]);
+  }, [anim, state, timings.step]);
 
   // Cinematic win sequence: pause -> zoom toward the winner's yard ->
   // confetti + fanfare -> game-over panel eases in.
@@ -606,33 +751,45 @@ function App() {
   const legalMoveIds = new Set(currentIsBot ? [] : legalMoves.map(t => t.id));
 
   const handleRoll = async () => {
-    if (busy || state.diceValue !== null || state.winner) return;
-    const roller = state.currentPlayer;
+    // Ref lock, not render state: two callers in the same tick (a tap plus a
+    // buffered/bot roll) would otherwise both pass a stale `busy` check and
+    // register two rolls.
+    if (rollingRef.current) return;
+    const s0 = stateRef.current;
+    if (animRef.current || s0.diceValue !== null || s0.winner) return;
+    rollingRef.current = true;
+
+    const roller = s0.currentPlayer;
     setRolling(true);
     playSound('dice');
     const record = await providerRef.current.roll(clientSeed);
     const nextCommitment = await providerRef.current.getCommitment();
-    // Decelerating tumble: face swaps slow down like a real die losing energy.
-    const tickDelays = [65, 75, 90, 110, 140, 180];
+
     let tick = 0;
+    let shown = 0;
     const nextTick = () => {
-      if (tick < tickDelays.length) {
-        setFaces(f => ({ ...f, [roller]: Math.floor(Math.random() * 6) + 1 }));
-        setTimeout(nextTick, tickDelays[tick]);
+      if (tick < DICE_TICK_DELAYS.length) {
+        // never repeat the previous face — a repeat reads as a dropped frame
+        let next = Math.floor(Math.random() * 6) + 1;
+        if (next === shown) next = (next % 6) + 1;
+        shown = next;
+        setFaces(f => ({ ...f, [roller]: next }));
+        setTimeout(nextTick, DICE_TICK_DELAYS[tick]);
         tick++;
         return;
       }
-      // landing: squash-bounce, face punch, random resting rotation, haptic
+      // landing: scale punch only — the die never moves and rests flat
       setFaces(f => ({ ...f, [roller]: record.value }));
-      setDieRestDeg(Math.random() * 22 - 11);
       setDieLanding(true);
-      setTimeout(() => setDieLanding(false), 380);
+      setTimeout(() => setDieLanding(false), 130);
       vibrate(12);
       setLastRoll(record);
       setCommitment(nextCommitment);
       verifyRoll(record).then(r => setLastRollValid(r.valid));
+      rollingRef.current = false;
       setRolling(false);
       setState(s => registerDiceRoll(s, record.value));
+      setRollSeq(n => n + 1);
     };
     nextTick();
   };
@@ -640,7 +797,7 @@ function App() {
   // Instant-response roll request with input buffering: a tap during the last
   // step of a move animation is queued and fires the moment the board is free.
   const requestRoll = () => {
-    if (!busy && state.diceValue === null && !state.winner && !currentIsBot) {
+    if (!busy && !rollingRef.current && state.diceValue === null && !state.winner && !currentIsBot) {
       void handleRoll();
       return;
     }
@@ -658,63 +815,87 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, state, currentIsBot]);
 
+  // Reads live refs so a delayed caller (auto-move timer, bot) can never act on
+  // a stale snapshot of the game.
   const moveToken = (tokenId: string) => {
-    if (anim || state.diceValue === null) return;
-    const token = state.tokens.find(t => t.id === tokenId)!;
-    const path = getMovePath(token, state.diceValue);
-    playSound('step'); // instant audible response to the tap
+    const s = stateRef.current;
+    if (animRef.current || s.diceValue === null) return;
+    const token = s.tokens.find(t => t.id === tokenId);
+    if (!token) return;
+    const path = getMovePath(token, s.diceValue);
     setAnim({ tokenId, path, step: -1 }); // -1 = wind-up first
   };
+
+  // One tick per cell entered: fires as the token renders in each new cell, so
+  // a move of N cells plays exactly N ticks in sync with the hops.
+  useEffect(() => {
+    if (!anim || anim.step < 0 || anim.step >= anim.path.length) return;
+    const key = `${anim.tokenId}:${anim.step}`;
+    if (lastTickRef.current === key) return;
+    lastTickRef.current = key;
+    playSound('step');
+  }, [anim]);
 
   const handleTokenClick = (tokenId: string) => {
     if (busy || currentIsBot) return;
     moveToken(tokenId);
   };
 
-  // No legal moves (any player): flash a "no moves" indicator with a soft
-  // unlucky cue, then advance the turn automatically. No pass button.
+  // No legal moves: hold the rolled face just long enough to read, then move
+  // on. No banner, no prompt — the turn simply advances.
   useEffect(() => {
     if (state.winner || busy || state.diceValue === null) return;
     if (legalMoves.length > 0) return;
-    setBanner(`${state.currentPlayer.toUpperCase()} — no moves, unlucky! 🎲`);
     playSound('unlucky');
-    const t = setTimeout(() => {
-      setBanner(null);
-      setState(s => passTurn(s));
-    }, 1000);
+    const t = setTimeout(() => setState(s => passTurn(s)), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, busy]);
 
-  // Auto-move when exactly one legal move exists. Checked continuously (every
-  // state change), so it also fires mid-sequence — e.g. the extra roll after a
-  // 6 auto-moves again if it too has a single option. A short delay leaves the
-  // highlight visible so the player sees what happened.
+  // Auto-move when exactly one legal move exists, re-evaluated fresh after
+  // EVERY roll (keyed on rollSeq), however deep an extra-turn chain runs.
+  //
+  // Deliberately no cleanup/clearTimeout: the previous version cancelled its
+  // pending auto-move on any re-render, and the decorative timers left over
+  // from earlier moves in a chain (landing, capture flight, die bounce) fire
+  // inside the 400ms window. A cancel that landed while `busy` was momentarily
+  // true left nothing to reschedule it, so the player was stuck tapping. The
+  // timer now survives re-renders and re-validates against live refs instead.
   useEffect(() => {
-    if (!autoMoveSingles || currentIsBot || state.winner || busy) return;
-    if (state.diceValue === null || legalMoves.length !== 1) return;
-    const tokenId = legalMoves[0].id;
-    const t = setTimeout(() => moveToken(tokenId), 400);
-    return () => clearTimeout(t);
+    if (!autoMoveSingles || currentIsBot || busy) return;
+    if (state.winner || state.diceValue === null) return;
+    if (autoScheduledRef.current === rollSeq) return;
+    const legal = getLegalMoves(state, state.diceValue);
+    if (legal.length !== 1) return;
+
+    autoScheduledRef.current = rollSeq;
+    const tokenId = legal[0].id;
+    // Brief delay so the highlight is visible before the token sets off.
+    setTimeout(() => {
+      const s = stateRef.current;
+      if (animRef.current || s.winner || s.diceValue === null) return;
+      const nowLegal = getLegalMoves(s, s.diceValue);
+      if (nowLegal.length === 1 && nowLegal[0].id === tokenId) moveToken(tokenId);
+    }, timings.autoMove);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, busy, currentIsBot, autoMoveSingles]);
+  }, [rollSeq, state, busy, currentIsBot, autoMoveSingles, timings.autoMove]);
 
   // Bot autoplay: roll, then move, with small delays for readability.
   // (The shared no-move effect above handles the bot's pass case too.)
   useEffect(() => {
     if (!currentIsBot || busy || state.winner) return;
     if (state.diceValue === null) {
-      const t = setTimeout(() => void handleRoll(), 650);
+      const t = setTimeout(() => void handleRoll(), timings.botRoll);
       return () => clearTimeout(t);
     }
     if (legalMoves.length === 0) return;
     const t = setTimeout(async () => {
       const tokenId = await ruleBasedBot(state, legalMoves, state.diceValue!);
       moveToken(tokenId);
-    }, 600);
+    }, timings.botMove);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIsBot, busy, state]);
+  }, [currentIsBot, busy, state, timings.botRoll, timings.botMove]);
 
   const resetTransients = () => {
     setAnim(null);
@@ -726,13 +907,18 @@ function App() {
     setLandedId(null);
     setHomedId(null);
     setShaking(false);
+    setRolling(false);
     pendingRollAt.current = null;
+    rollingRef.current = false;
+    autoScheduledRef.current = -1;
+    lastTickRef.current = null;
+    animRef.current = null;
   };
 
   const startGame = (seats: PlayerColor[], bots: Set<PlayerColor>) => {
     setPlayers(seats);
     setBotSeats(bots);
-    setState(createInitialState(seats));
+    setState(createInitialState(seats, rules));
     resetTransients();
   };
 
@@ -759,25 +945,35 @@ function App() {
     return counts;
   }, [state.tokens]);
 
-  const muteButton = (
+  const settingsUi = (
     <>
-      <button className="mute-btn" onClick={toggleMute} aria-label="Toggle sound">
-        {muted ? '🔇' : '🔊'}
-      </button>
       <button
-        className={`mute-btn music-btn ${musicOn ? '' : 'off'}`}
-        onClick={toggleMusic}
-        aria-label="Toggle music"
+        className="mute-btn"
+        onClick={() => setSettingsOpen(true)}
+        aria-label="Settings"
       >
-        ♪
+        ⚙
       </button>
+      {settingsOpen && (
+        <SettingsPanel
+          speed={speed}
+          onSpeedChange={setSpeed}
+          muted={muted}
+          onMutedChange={applyMuted}
+          autoMoveSingles={autoMoveSingles}
+          onAutoMoveChange={setAutoMoveSingles}
+          rules={rules}
+          onRulesChange={applyRules}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </>
   );
 
   if (!inGame) {
     return (
       <div className="app-root">
-        {muteButton}
+        {settingsUi}
         <h1>Ludo</h1>
         <SetupScreen onStart={startGame} />
       </div>
@@ -786,7 +982,7 @@ function App() {
 
   return (
     <div className="app-root">
-      {muteButton}
+      {settingsUi}
       <h1>Ludo</h1>
 
       <div
@@ -841,7 +1037,6 @@ function App() {
                     (state.diceValue === null || anim !== null)
                   }
                   dieLanding={dieLanding}
-                  dieRestDeg={dieRestDeg}
                   onRoll={requestRoll}
                 />
               ) : (
@@ -880,20 +1075,9 @@ function App() {
 
       <div className="controls">
         {!state.winner && (
-          <>
-            <label className="auto-toggle">
-              <input
-                type="checkbox"
-                checked={autoMoveSingles}
-                onChange={e => setAutoMoveSingles(e.target.checked)}
-              />
-              Auto-move single options
-            </label>
-
-            <button className="restart-link" onClick={restart}>
-              ⟲ Restart
-            </button>
-          </>
+          <button className="restart-link" onClick={restart}>
+            ⟲ Restart
+          </button>
         )}
 
         <FairnessPanel

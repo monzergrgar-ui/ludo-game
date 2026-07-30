@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#1a3465"/>
+      <stop offset="60%" stop-color="#10234a"/>
+      <stop offset="100%" stop-color="#0a1832"/>
+    </radialGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="55%" stop-color="#fbfaf6"/>
+      <stop offset="100%" stop-color="#dcd9cf"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)"/>
+
+  <!-- diamond tile pattern, matching the game's backdrop -->
+  <g stroke="#ffffff" stroke-opacity="0.05" stroke-width="2" fill="none">
+    <path d="M-100 60 L572 60 M-100 172 L572 172 M-100 284 L572 284 M-100 396 L572 396"
+          transform="rotate(45 256 256)"/>
+    <path d="M60 -100 L60 572 M172 -100 L172 572 M284 -100 L284 572 M396 -100 L396 572"
+          transform="rotate(45 256 256)"/>
+  </g>
+
+  <!-- four player tokens around the die -->
+  <circle cx="128" cy="128" r="30" fill="#e30613"/>
+  <circle cx="384" cy="128" r="30" fill="#00a651"/>
+  <circle cx="128" cy="384" r="30" fill="#0072ce"/>
+  <circle cx="384" cy="384" r="30" fill="#ffce00"/>
+
+  <!-- the die -->
+  <g transform="rotate(-8 256 256)">
+    <rect x="150" y="158" width="212" height="212" rx="46" fill="#0a1832" opacity="0.45"/>
+    <rect x="150" y="150" width="212" height="212" rx="46" fill="url(#face)"/>
+    <g fill="#141414">
+      <circle cx="209" cy="209" r="21"/>
+      <circle cx="303" cy="209" r="21"/>
+      <circle cx="256" cy="256" r="21"/>
+      <circle cx="209" cy="303" r="21"/>
+      <circle cx="303" cy="303" r="21"/>
+    </g>
+  </g>
+</svg>
