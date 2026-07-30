@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Board from './components/Board';
 import {
   createInitialState,
@@ -16,15 +16,16 @@ import {
   type FairRollRecord,
 } from './game/fairness';
 import { ruleBasedBot } from './game/bot';
+import { playSound, soundSettings } from './game/sound';
+import {
+  getCommentaryLine,
+  isUnderThreat,
+  isTrailing,
+  type CommentaryEvent,
+} from './game/commentary';
+import { COLORS } from './game/board';
 import type { PlayerColor, Token } from './game/types';
 import './App.css';
-
-const COLOR_HEX: Record<PlayerColor, string> = {
-  red: '#e63946',
-  green: '#2a9d3e',
-  yellow: '#f4c531',
-  blue: '#3178c6',
-};
 
 /** Seat sets per player count — 2 players sit on opposite corners. */
 const SEATS_FOR_COUNT: Record<number, PlayerColor[]> = {
@@ -33,11 +34,92 @@ const SEATS_FOR_COUNT: Record<number, PlayerColor[]> = {
   4: ['red', 'green', 'yellow', 'blue'],
 };
 
+/** Which corner of the board each color's yard occupies. */
+const PLATE_CORNER: Record<PlayerColor, string> = {
+  red: 'tl',
+  green: 'tr',
+  yellow: 'br',
+  blue: 'bl',
+};
+
 interface AnimState {
   tokenId: string;
   path: number[];
   step: number;
 }
+
+/* --- 3D-look die with proper pips --- */
+
+const PIP_LAYOUT: Record<number, number[]> = {
+  1: [4],
+  2: [0, 8],
+  3: [0, 4, 8],
+  4: [0, 2, 6, 8],
+  5: [0, 2, 4, 6, 8],
+  6: [0, 2, 3, 5, 6, 8],
+};
+
+interface DieProps {
+  value: number | null;
+  rolling: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}
+
+function Die({ value, rolling, disabled, onClick }: DieProps) {
+  const face = value ?? 6;
+  return (
+    <button
+      className={`die ${rolling ? 'die-tumble' : ''}`}
+      onClick={onClick}
+      disabled={disabled}
+      aria-label="Roll the die"
+    >
+      <span className="die-face">
+        {Array.from({ length: 9 }, (_, i) => (
+          <span key={i} className={`pip ${PIP_LAYOUT[face].includes(i) ? 'on' : ''}`} />
+        ))}
+      </span>
+    </button>
+  );
+}
+
+/* --- win confetti --- */
+
+function Confetti() {
+  const pieces = useMemo(
+    () =>
+      Array.from({ length: 90 }, (_, i) => ({
+        left: Math.random() * 100,
+        delay: Math.random() * 2.2,
+        dur: 2.6 + Math.random() * 2.2,
+        color: [COLORS.red, COLORS.green, COLORS.yellow, COLORS.blue, '#ffffff'][i % 5],
+        size: 6 + Math.random() * 7,
+        rot: Math.random() * 360,
+      })),
+    [],
+  );
+  return (
+    <div className="confetti" aria-hidden="true">
+      {pieces.map((p, i) => (
+        <i
+          key={i}
+          style={{
+            left: `${p.left}%`,
+            background: p.color,
+            width: p.size,
+            height: p.size * 0.45,
+            animationDelay: `${p.delay}s`,
+            animationDuration: `${p.dur}s`,
+            transform: `rotate(${p.rot}deg)`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/* --- setup screen --- */
 
 interface SetupScreenProps {
   onStart: (players: PlayerColor[], bots: Set<PlayerColor>) => void;
@@ -76,7 +158,7 @@ function SetupScreen({ onStart }: SetupScreenProps) {
           <div
             key={color}
             className="seat-row"
-            style={{ '--seat-color': COLOR_HEX[color] } as CSSProperties}
+            style={{ '--seat-color': COLORS[color] } as CSSProperties}
           >
             <span className="seat-dot" />
             <span className="seat-name">{color.toUpperCase()}</span>
@@ -100,6 +182,8 @@ function SetupScreen({ onStart }: SetupScreenProps) {
     </div>
   );
 }
+
+/* --- provably-fair panel --- */
 
 interface FairnessPanelProps {
   commitment: RollCommitment | null;
@@ -172,6 +256,8 @@ function FairnessPanel({
   );
 }
 
+/* --- main app --- */
+
 function App() {
   const [players, setPlayers] = useState<PlayerColor[] | null>(null);
   const [botSeats, setBotSeats] = useState<Set<PlayerColor>>(new Set());
@@ -181,6 +267,9 @@ function App() {
   const [anim, setAnim] = useState<AnimState | null>(null);
   const [poppingIds, setPoppingIds] = useState<Set<string>>(new Set());
   const [banner, setBanner] = useState<string | null>(null);
+  const [shaking, setShaking] = useState(false);
+  const [feed, setFeed] = useState<string[]>([]);
+  const [muted, setMuted] = useState(soundSettings.muted);
 
   // Provably-fair dice: simulated server + commitment/reveal bookkeeping.
   const providerRef = useRef(new SimulatedFairnessServer());
@@ -195,31 +284,75 @@ function App() {
     providerRef.current.getCommitment().then(setCommitment);
   }, []);
 
+  const pushComment = (event: CommentaryEvent) => {
+    setFeed(f => [getCommentaryLine(event), ...f].slice(0, 3));
+  };
+
+  const toggleMute = () => {
+    soundSettings.muted = !soundSettings.muted;
+    setMuted(soundSettings.muted);
+  };
+
   // Step the currently-moving token through its path one cell at a time.
   useEffect(() => {
     if (!anim) return;
 
     if (anim.step >= anim.path.length) {
       const dice = state.diceValue!;
+      const mover = state.currentPlayer;
+      const wasTrailing = isTrailing(state, mover);
       const result = applyMove(state, anim.tokenId, dice);
-      if (result.lastAction?.type === 'move' && result.lastAction.captured.length) {
-        const captured = new Set(result.lastAction.captured);
+      const action = result.lastAction;
+
+      if (action?.type === 'move' && action.captured.length) {
+        playSound('capture');
+        setShaking(true);
+        setTimeout(() => setShaking(false), 450);
+        const captured = new Set(action.captured);
         setPoppingIds(captured);
         setTimeout(() => setPoppingIds(new Set()), 400);
+        const victim = result.tokens.find(t => t.id === action.captured[0])!.color;
+        pushComment({ type: wasTrailing ? 'comeback' : 'capture', player: mover, victim });
+      } else if (result.winner) {
+        // handled below
+      } else if (action?.type === 'move' && action.to === 58) {
+        playSound('home');
+        pushComment({ type: wasTrailing ? 'comeback' : 'home', player: mover });
+      } else if (isUnderThreat(result, anim.tokenId) && Math.random() < 0.5) {
+        pushComment({ type: 'nearMiss', player: mover });
       }
+
+      if (result.winner) {
+        playSound('win');
+        pushComment({ type: 'win', player: result.winner });
+      }
+
       setState(result);
       setAnim(null);
       return;
     }
-    const timer = setTimeout(() => setAnim(a => (a ? { ...a, step: a.step + 1 } : null)), 180);
+    const timer = setTimeout(() => {
+      playSound('step');
+      setAnim(a => (a ? { ...a, step: a.step + 1 } : null));
+    }, 180);
     return () => clearTimeout(timer);
   }, [anim, state]);
+
+  // Soft cue whenever the turn moves to another player.
+  const prevPlayerRef = useRef(state.currentPlayer);
+  useEffect(() => {
+    if (state.currentPlayer !== prevPlayerRef.current) {
+      prevPlayerRef.current = state.currentPlayer;
+      if (inGame && !state.winner) playSound('turn');
+    }
+  }, [state.currentPlayer, state.winner, inGame]);
 
   // Show a transient banner for forfeits/passes, then clear it.
   useEffect(() => {
     if (!state.lastAction) return;
     if (state.lastAction.type === 'forfeitSixes') {
       setBanner(`${state.lastAction.player.toUpperCase()} rolled three 6s — turn forfeited!`);
+      pushComment({ type: 'threeSixes', player: state.lastAction.player });
     } else if (state.lastAction.type === 'pass') {
       setBanner(`${state.lastAction.player.toUpperCase()} had no legal moves — turn passed.`);
     } else {
@@ -227,6 +360,7 @@ function App() {
     }
     const t = setTimeout(() => setBanner(null), 1800);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.lastAction]);
 
   const legalMoves: Token[] = state.diceValue !== null ? getLegalMoves(state, state.diceValue) : [];
@@ -237,6 +371,7 @@ function App() {
   const handleRoll = async () => {
     if (busy || state.diceValue !== null || state.winner) return;
     setRolling(true);
+    playSound('dice');
     const record = await providerRef.current.roll(clientSeed);
     const nextCommitment = await providerRef.current.getCommitment();
     let ticks = 0;
@@ -295,6 +430,7 @@ function App() {
     setDiceFace(null);
     setAnim(null);
     setBanner(null);
+    setFeed([]);
   };
 
   const restart = () => {
@@ -302,6 +438,7 @@ function App() {
     setAnim(null);
     setBanner(null);
     setDiceFace(null);
+    setFeed([]);
   };
 
   // Override the animating token's position with its current path step for rendering.
@@ -313,9 +450,24 @@ function App() {
     return t;
   });
 
+  const homeCounts = useMemo(() => {
+    const counts = {} as Record<PlayerColor, number>;
+    for (const t of state.tokens) {
+      if (t.position === 58) counts[t.color] = (counts[t.color] ?? 0) + 1;
+    }
+    return counts;
+  }, [state.tokens]);
+
+  const muteButton = (
+    <button className="mute-btn" onClick={toggleMute} aria-label="Toggle sound">
+      {muted ? '🔇' : '🔊'}
+    </button>
+  );
+
   if (!inGame) {
     return (
       <div className="app-root">
+        {muteButton}
         <h1>Ludo</h1>
         <SetupScreen onStart={startGame} />
       </div>
@@ -324,11 +476,12 @@ function App() {
 
   return (
     <div className="app-root">
+      {muteButton}
       <h1>Ludo</h1>
 
       <div
         className="turn-indicator"
-        style={{ '--turn-color': COLOR_HEX[state.currentPlayer] } as CSSProperties}
+        style={{ '--turn-color': COLORS[state.currentPlayer] } as CSSProperties}
       >
         {state.winner ? (
           <span className="winner-text">{state.winner.toUpperCase()} WINS!</span>
@@ -342,20 +495,50 @@ function App() {
 
       {banner && <div className="banner">{banner}</div>}
 
-      <Board
-        tokens={renderTokens}
-        legalMoveIds={legalMoveIds}
-        poppingIds={poppingIds}
-        onTokenClick={handleTokenClick}
-      />
+      {feed.length > 0 && (
+        <div className="commentary" dir="rtl">
+          <span className="commentary-mic">🎙️</span>
+          <div className="commentary-lines">
+            {feed.map((line, i) => (
+              <p key={`${line}-${i}`} className={i === 0 ? 'commentary-latest' : 'commentary-old'}>
+                {line}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className={`board-wrap ${shaking ? 'shake' : ''}`}>
+        <div className="board-frame">
+          <Board
+            tokens={renderTokens}
+            legalMoveIds={legalMoveIds}
+            poppingIds={poppingIds}
+            movingTokenId={anim?.tokenId ?? null}
+            onTokenClick={handleTokenClick}
+          />
+        </div>
+        {players!.map(color => (
+          <div
+            key={color}
+            className={[
+              'plate',
+              `plate-${PLATE_CORNER[color]}`,
+              color === state.currentPlayer && !state.winner ? 'plate-active' : '',
+            ].join(' ')}
+            style={{ '--plate-color': COLORS[color] } as CSSProperties}
+          >
+            <span className="plate-avatar">{botSeats.has(color) ? '🤖' : '🙂'}</span>
+            <span className="plate-name">{color.toUpperCase()}</span>
+            <span className="plate-score">🏠 {homeCounts[color] ?? 0}/4</span>
+          </div>
+        ))}
+      </div>
 
       <div className="controls">
         {state.winner ? (
           <div className="winner-actions">
-            <button
-              className="start-btn"
-              onClick={() => startGame(players!, botSeats)}
-            >
+            <button className="start-btn" onClick={() => startGame(players!, botSeats)}>
               Play Again
             </button>
             <button className="pass-btn" onClick={restart}>
@@ -364,13 +547,12 @@ function App() {
           </div>
         ) : (
           <>
-            <button
-              className={`dice ${rolling ? 'rolling' : ''}`}
-              onClick={handleRoll}
+            <Die
+              value={diceFace}
+              rolling={rolling}
               disabled={busy || state.diceValue !== null || currentIsBot}
-            >
-              {diceFace ?? '🎲'}
-            </button>
+              onClick={handleRoll}
+            />
 
             {state.diceValue !== null && !anim && !currentIsBot && legalMoves.length === 0 && (
               <button className="pass-btn" onClick={handlePass}>
@@ -392,6 +574,8 @@ function App() {
           onClientSeedChange={setClientSeed}
         />
       </div>
+
+      {state.winner && <Confetti />}
     </div>
   );
 }

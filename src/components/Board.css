@@ -1,28 +1,29 @@
 .ludo-board {
   width: 100%;
-  max-width: 560px;
   aspect-ratio: 1;
   display: block;
   margin: 0 auto;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
 }
 
 .board-bg {
-  fill: #fff;
+  fill: #fffdf7;
 }
 
 .yard-inner {
-  fill: #fff;
-  stroke: #ccc;
+  fill: #fffdf7;
+  stroke: rgba(0, 0, 0, 0.15);
   stroke-width: 0.03;
 }
 
 .board-star {
-  fill: #444;
+  fill: #6b6045;
   pointer-events: none;
   user-select: none;
+}
+
+.board-star-light {
+  fill: rgba(255, 255, 255, 0.9);
 }
 
 .token {
@@ -34,19 +35,36 @@
   cursor: pointer;
 }
 
+.token-gloss {
+  fill: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
 .token-highlight {
-  fill: none;
+  fill: rgba(255, 212, 0, 0.15);
   stroke: #ffd400;
-  stroke-width: 0.06;
+  stroke-width: 0.07;
   animation: pulse-highlight 0.9s ease-in-out infinite;
 }
 
 @keyframes pulse-highlight {
-  0%, 100% { opacity: 0.5; r: 0.4; }
-  50% { opacity: 1; r: 0.46; }
+  0%, 100% { opacity: 0.55; r: 0.42; }
+  50% { opacity: 1; r: 0.48; }
 }
 
-.token-popping circle:nth-child(2) {
+/* per-step hop while a token is animating along its path */
+.token-moving .token-body {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: token-hop 0.18s ease-in-out infinite;
+}
+
+@keyframes token-hop {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-0.16px) scale(1.12); }
+}
+
+.token-popping .token-body {
   transform-box: fill-box;
   transform-origin: center;
   animation: pop-capture 0.4s ease;

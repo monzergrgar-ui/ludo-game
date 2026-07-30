@@ -5,10 +5,26 @@ import { START_OFFSET, SAFE_SQUARES } from './engine';
 export const BOARD_SIZE = 15;
 
 export const COLORS: Record<PlayerColor, string> = {
-  red: '#e63946',
-  green: '#2a9d3e',
-  yellow: '#f4c531',
-  blue: '#3178c6',
+  red: '#e2183d',
+  green: '#00a651',
+  yellow: '#ffc907',
+  blue: '#0072ce',
+};
+
+/** Darker shade of each color, for gradient edges and bevels. */
+export const COLOR_DARK: Record<PlayerColor, string> = {
+  red: '#8e0e26',
+  green: '#006633',
+  yellow: '#c79100',
+  blue: '#004a8f',
+};
+
+/** Lighter shade of each color, for glossy highlights. */
+export const COLOR_LIGHT: Record<PlayerColor, string> = {
+  red: '#ff6b7f',
+  green: '#4cd98a',
+  yellow: '#ffe36b',
+  blue: '#5aaef0',
 };
 
 export const COLOR_TINT: Record<PlayerColor, string> = {
