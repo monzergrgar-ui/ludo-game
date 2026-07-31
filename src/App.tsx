@@ -6,6 +6,7 @@ import {
   getLegalMoves,
   getDistinctMoveOutcomes,
   getPlayableDice,
+  isRollAllowed,
   getMovePath,
   applyMove,
   passTurn,
@@ -154,14 +155,20 @@ interface CornerDieProps {
   rolling: boolean;
   canRoll: boolean;
   dieLanding: boolean;
-  onRoll: () => void;
+  /** Unspent values beyond the aimed one, shown beside the die. */
+  queue: number[];
+  /** Values already spent this turn, shown struck through. */
+  spent: number[];
+  /** Another roll is available — show the nudge arrow. */
+  extraRoll: boolean;
+  onRoll: (color: PlayerColor) => void;
+  onPickDice: (value: number) => void;
 }
 
 /**
- * A player indicator is just their die, parked at their own corner of the
- * board: lit and tappable on their turn, dark otherwise. No avatar, name or
- * counter — they cost vertical space the board wants, and the lit die already
- * says whose turn it is.
+ * A player indicator is just their die, parked diagonally outside their own
+ * corner of the board. The queued values ride along beside it in an absolutely
+ * positioned strip, so nothing here can ever change the board's size.
  */
 function CornerDie({
   color,
@@ -170,21 +177,45 @@ function CornerDie({
   rolling,
   canRoll,
   dieLanding,
+  queue,
+  spent,
+  extraRoll,
   onRoll,
+  onPickDice,
 }: CornerDieProps) {
   return (
     <div
       className={`corner-die ${CORNER_CLASS[color]} ${active ? 'corner-active' : ''}`}
       style={{ '--panel-color': COLORS[color] } as CSSProperties}
     >
+      {active && extraRoll && <span className="roll-again" aria-hidden="true" />}
       <Die
         value={face}
         rolling={rolling && active}
         canRoll={canRoll}
         inactive={!active}
         landing={dieLanding && active}
-        onRoll={onRoll}
+        onRoll={() => onRoll(color)}
       />
+      {active && (queue.length > 0 || spent.length > 0) && (
+        <span className="corner-queue">
+          {queue.map((v, i) => (
+            <button
+              key={`q${i}`}
+              className="mini-die"
+              onClick={() => onPickDice(v)}
+              aria-label={`Use ${v}`}
+            >
+              {v}
+            </button>
+          ))}
+          {spent.map((v, i) => (
+            <span key={`s${i}`} className="mini-die mini-spent" aria-label={`${v}, spent`}>
+              {v}
+            </span>
+          ))}
+        </span>
+      )}
     </div>
   );
 }
@@ -636,6 +667,8 @@ function App() {
   const [selectedDice, setSelectedDice] = useState<number | null>(null);
   /** Everything rolled this turn, so spent values can still be shown greyed. */
   const [rolledThisTurn, setRolledThisTurn] = useState<number[]>([]);
+  /** Another roll is waiting to be taken — drives the nudge arrow. */
+  const [extraRollPending, setExtraRollPending] = useState(false);
   const pendingRollAt = useRef<number | null>(null);
 
   /**
@@ -797,6 +830,21 @@ function App() {
     }
   }, [state.phase, state.diceQueue.length]);
 
+  // The nudge arrow: another roll is available whenever the player is back in
+  // the rolling phase having already rolled, or holds an unspent 6 chain.
+  const prevTurnRef = useRef(state.currentPlayer);
+  useEffect(() => {
+    const sameTurn = prevTurnRef.current === state.currentPlayer;
+    prevTurnRef.current = state.currentPlayer;
+    if (state.winner || state.phase !== 'rolling') {
+      setExtraRollPending(false);
+      return;
+    }
+    // Rolling again mid-turn: either a 6 kept the roll alive, or a capture or
+    // home entry earned one. A brand-new turn is not an "extra" roll.
+    setExtraRollPending(sameTurn && (state.diceQueue.length > 0 || rolledThisTurn.length > 0));
+  }, [state.currentPlayer, state.phase, state.diceQueue.length, state.winner, rolledThisTurn.length]);
+
   // Soft cue whenever the turn moves to another player.
   const prevPlayerRef = useRef(state.currentPlayer);
   useEffect(() => {
@@ -824,6 +872,27 @@ function App() {
       ? selectedDice
       : (playableDice[0] ?? null);
   const legalMoves: Token[] = activeDice !== null ? getLegalMoves(state, activeDice) : [];
+
+  // Queue shown beside the active die: the aimed value is on the die face, so
+  // only the remainder rides alongside it.
+  const queueBeside = (() => {
+    const rest = [...state.diceQueue];
+    if (activeDice !== null) {
+      const at = rest.indexOf(activeDice);
+      if (at !== -1) rest.splice(at, 1);
+    }
+    return rest;
+  })();
+  const spentThisTurn = (() => {
+    const unspent = [...state.diceQueue];
+    const out: number[] = [];
+    for (const v of rolledThisTurn) {
+      const at = unspent.indexOf(v);
+      if (at === -1) out.push(v);
+      else unspent.splice(at, 1);
+    }
+    return out;
+  })();
   const busy = anim !== null || rolling;
   const currentIsBot = inGame && botSeats.has(state.currentPlayer);
   const legalMoveIds = new Set(currentIsBot ? [] : legalMoves.map(t => t.id));
@@ -875,8 +944,13 @@ function App() {
 
   // Instant-response roll request with input buffering: a tap during the last
   // step of a move animation is queued and fires the moment the board is free.
-  const requestRoll = () => {
-    if (!busy && !rollingRef.current && state.phase === 'rolling' && !state.winner && !currentIsBot) {
+  /** `color` is the die that was tapped — never assume it is the active one. */
+  const requestRoll = (color: PlayerColor) => {
+    // A die belongs to one player. Tapping anyone else's does nothing at all,
+    // and is never buffered — otherwise it would fire on their turn instead.
+    if (color !== state.currentPlayer || botSeats.has(color)) return;
+
+    if (!busy && !rollingRef.current && isRollAllowed(state, color)) {
       void handleRoll();
       return;
     }
@@ -1094,39 +1168,6 @@ function App() {
 
       {banner && <div className="banner">{banner}</div>}
 
-      {rolledThisTurn.length > 0 && !state.winner && (
-        <div className="dice-tray" role="group" aria-label="Rolled dice">
-          {(() => {
-            // The queue holds only unspent values, so match each rolled value
-            // against a working copy to tell spent from unspent.
-            const unspent = [...state.diceQueue];
-            return rolledThisTurn.map((value, i) => {
-              const at = unspent.indexOf(value);
-              const spent = at === -1;
-              if (!spent) unspent.splice(at, 1);
-              const playable = !spent && playableDice.includes(value);
-              const isActive = playable && value === activeDice;
-              return (
-                <button
-                  key={i}
-                  className={[
-                    'tray-die',
-                    spent ? 'tray-spent' : '',
-                    isActive ? 'tray-active' : '',
-                    !spent && !playable ? 'tray-dead' : '',
-                  ].join(' ')}
-                  disabled={!playable || currentIsBot}
-                  onClick={() => setSelectedDice(value)}
-                  aria-label={`${value}${spent ? ', spent' : ''}`}
-                >
-                  {value}
-                </button>
-              );
-            });
-          })()}
-        </div>
-      )}
-
       <div className="table">
         <div
           className={[
@@ -1171,7 +1212,11 @@ function App() {
               (state.phase === 'rolling' || anim !== null)
             }
             dieLanding={dieLanding}
+            queue={queueBeside}
+            spent={spentThisTurn}
+            extraRoll={extraRollPending}
             onRoll={requestRoll}
+            onPickDice={setSelectedDice}
           />
         ))}
       </div>

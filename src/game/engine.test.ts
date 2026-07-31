@@ -9,6 +9,7 @@ import {
   getCapturingMoves,
   getDistinctMoveOutcomes,
   getPlayableDice,
+  isRollAllowed,
   getLeadingToken,
   SAFE_SQUARES,
   START_OFFSET,
@@ -519,6 +520,44 @@ describe('house rules', () => {
 
     expect(state.tokens.find(t => t.id === 'red-0')!.position).toBe(30);
     expect(state.currentPlayer).toBe('green');
+  });
+});
+
+describe('a die may only be rolled by its own player', () => {
+  // Regression: every player's die is on screen, and tapping an idle player's
+  // die rolled for whoever's turn it actually was.
+  it('allows only the current player, and only in the rolling phase', () => {
+    const state = createInitialState();
+    expect(state.currentPlayer).toBe('red');
+
+    expect(isRollAllowed(state, 'red')).toBe(true);
+    for (const other of ['green', 'yellow', 'blue'] as const) {
+      expect(isRollAllowed(state, other), `${other} must not be able to roll`).toBe(false);
+    }
+  });
+
+  it('nobody may roll while values are still being allocated', () => {
+    const moving = registerDiceRoll(createInitialState(), 3);
+    expect(moving.phase).toBe('moving');
+    for (const color of ['red', 'green', 'yellow', 'blue'] as const) {
+      expect(isRollAllowed(moving, color)).toBe(false);
+    }
+  });
+
+  it('follows the turn as it passes', () => {
+    const passed = passTurn(registerDiceRoll(createInitialState(), 3));
+    expect(passed.currentPlayer).toBe('green');
+    expect(isRollAllowed(passed, 'green')).toBe(true);
+    expect(isRollAllowed(passed, 'red')).toBe(false);
+  });
+
+  it('nobody may roll once the game is won', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', FINISH - 1);
+    for (const id of ['red-1', 'red-2', 'red-3']) setPos(state, id, FINISH);
+    const won = applyMove({ ...state, diceQueue: [1], phase: 'moving' }, 'red-0', 1);
+    expect(won.winner).toBe('red');
+    expect(isRollAllowed(won, 'red')).toBe(false);
   });
 });
 

@@ -187,6 +187,15 @@ function getNextPlayer(state: GameState): PlayerColor {
   return players[(players.indexOf(currentPlayer) + 1) % players.length];
 }
 
+/**
+ * Whether `color` may roll right now. Every player's die is on screen at once,
+ * so this must be checked per die: without it a tap on an idle player's die
+ * rolls for whoever's turn it actually is.
+ */
+export function isRollAllowed(state: GameState, color: PlayerColor): boolean {
+  return !state.winner && state.phase === 'rolling' && state.currentPlayer === color;
+}
+
 /** The distinct queued values that currently have at least one legal move. */
 export function getPlayableDice(state: GameState): number[] {
   const seen = new Set<number>();
