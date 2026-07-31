@@ -6,7 +6,9 @@ import {
   getLegalMoves,
   applyMove,
   passTurn,
+  getPlayableDice,
   FINISH,
+  DEFAULT_RULES,
 } from './engine';
 import { ruleBasedBot } from './bot';
 import type { GameState, HouseRules } from './types';
@@ -31,31 +33,31 @@ function assertValid(state: GameState, turn: number) {
  */
 /** Plays one full 4-bot game headlessly and returns the finished state. */
 async function playGame(rules?: Partial<HouseRules>): Promise<GameState> {
-  let state = createInitialState(undefined, {
-    mandatoryCapture: false,
-    quickMode: false,
-    threeSixesSendsLeaderToBase: false,
-    ...rules,
-  });
-  let turns = 0;
-  const MAX_TURNS = 20000;
+  let state = createInitialState(undefined, { ...DEFAULT_RULES, ...rules });
+  let steps = 0;
+  const MAX_STEPS = 40000;
 
-  while (!state.winner && turns < MAX_TURNS) {
-    turns++;
-    const dice = rollDice();
-    state = registerDiceRoll(state, dice);
-    assertValid(state, turns);
-    if (state.diceValue === null) continue; // three-sixes forfeit
+  while (!state.winner && steps < MAX_STEPS) {
+    steps++;
 
-    const legal = getLegalMoves(state, dice);
-    if (legal.length === 0) {
+    if (state.phase === 'rolling') {
+      state = registerDiceRoll(state, rollDice());
+      assertValid(state, steps);
+      continue; // a 6 under rollAllFirst keeps us rolling
+    }
+
+    // Allocation phase: spend one queued value, or pass if none is playable.
+    const playable = getPlayableDice(state);
+    if (playable.length === 0) {
       state = passTurn(state);
       continue;
     }
-    const tokenId = await ruleBasedBot(state, legal, dice);
-    expect(legal.map(t => t.id)).toContain(tokenId);
-    state = applyMove(state, tokenId, dice);
-    assertValid(state, turns);
+    const choice = await ruleBasedBot(state);
+    expect(choice, `bot returned null with ${playable.length} playable values`).not.toBeNull();
+    expect(state.diceQueue).toContain(choice!.dice);
+    expect(getLegalMoves(state, choice!.dice).map(t => t.id)).toContain(choice!.tokenId);
+    state = applyMove(state, choice!.tokenId, choice!.dice);
+    assertValid(state, steps);
   }
   return state;
 }

@@ -5,6 +5,7 @@ import {
   registerDiceRoll,
   getLegalMoves,
   getDistinctMoveOutcomes,
+  getPlayableDice,
   getMovePath,
   applyMove,
   passTurn,
@@ -40,6 +41,8 @@ interface AnimState {
   path: number[];
   /** -1 = anticipation wind-up, 0..path.length = hopping, >= length = done. */
   step: number;
+  /** Which queued value this move spends. */
+  dice: number;
 }
 
 type GameSpeed = 'normal' | 'fast';
@@ -299,6 +302,20 @@ function SettingsPanel({
               onChange={e => onAutoMoveChange(e.target.checked)}
             />
             <span>Auto-move single options</span>
+          </label>
+          <label className="settings-row">
+            <input
+              type="checkbox"
+              checked={rules.rollAllFirst}
+              onChange={e => onRulesChange({ ...rules, rollAllFirst: e.target.checked })}
+            />
+            <span>
+              Roll all dice before moving
+              <small>
+                Re-roll every 6 first, then spend the values in any order. Off restores the
+                classic order — move after each roll.
+              </small>
+            </span>
           </label>
         </div>
 
@@ -577,6 +594,10 @@ function App() {
   const [dieLanding, setDieLanding] = useState(false);
   const [winStage, setWinStage] = useState(0); // 0 idle, 1 zoom, 2 confetti, 3 panel
   const [autoMoveSingles, setAutoMoveSingles] = useState(true);
+  /** Which queued value the player is spending next (null = first playable). */
+  const [selectedDice, setSelectedDice] = useState<number | null>(null);
+  /** Everything rolled this turn, so spent values can still be shown greyed. */
+  const [rolledThisTurn, setRolledThisTurn] = useState<number[]>([]);
   const pendingRollAt = useRef<number | null>(null);
 
   /**
@@ -590,8 +611,8 @@ function App() {
   const animRef = useRef(anim);
   /** Guards against two roll chains running at once (double registerDiceRoll). */
   const rollingRef = useRef(false);
-  /** rollSeq an auto-move has already been scheduled for. */
-  const autoScheduledRef = useRef(-1);
+  /** Queue signature an auto-move has already been scheduled for. */
+  const autoScheduledKeyRef = useRef<string | null>(null);
   /** Last movement step a tick sound was played for. */
   const lastTickRef = useRef<string | null>(null);
 
@@ -638,7 +659,7 @@ function App() {
     }
 
     if (anim.step >= anim.path.length) {
-      const dice = state.diceValue!;
+      const dice = anim.dice;
       const mover = state.currentPlayer;
       const movedId = anim.tokenId;
       const wasTrailing = isTrailing(state, mover);
@@ -722,6 +743,15 @@ function App() {
     };
   }, [state.winner]);
 
+  // A fresh rolling phase with nothing queued means a new turn (or an earned
+  // extra roll), so the tray starts empty again.
+  useEffect(() => {
+    if (state.phase === 'rolling' && state.diceQueue.length === 0) {
+      setRolledThisTurn([]);
+      setSelectedDice(null);
+    }
+  }, [state.phase, state.diceQueue.length]);
+
   // Soft cue whenever the turn moves to another player.
   const prevPlayerRef = useRef(state.currentPlayer);
   useEffect(() => {
@@ -742,7 +772,13 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.lastAction]);
 
-  const legalMoves: Token[] = state.diceValue !== null ? getLegalMoves(state, state.diceValue) : [];
+  // Values still spendable this turn, and which one the player is aiming.
+  const playableDice = state.phase === 'moving' ? getPlayableDice(state) : [];
+  const activeDice =
+    selectedDice !== null && playableDice.includes(selectedDice)
+      ? selectedDice
+      : (playableDice[0] ?? null);
+  const legalMoves: Token[] = activeDice !== null ? getLegalMoves(state, activeDice) : [];
   const busy = anim !== null || rolling;
   const currentIsBot = inGame && botSeats.has(state.currentPlayer);
   const legalMoveIds = new Set(currentIsBot ? [] : legalMoves.map(t => t.id));
@@ -753,7 +789,7 @@ function App() {
     // register two rolls.
     if (rollingRef.current) return;
     const s0 = stateRef.current;
-    if (animRef.current || s0.diceValue !== null || s0.winner) return;
+    if (animRef.current || s0.phase !== 'rolling' || s0.winner) return;
     rollingRef.current = true;
 
     const roller = s0.currentPlayer;
@@ -785,6 +821,7 @@ function App() {
       verifyRoll(record).then(r => setLastRollValid(r.valid));
       rollingRef.current = false;
       setRolling(false);
+      setRolledThisTurn(r => [...r, record.value]);
       setState(s => registerDiceRoll(s, record.value));
       setRollSeq(n => n + 1);
     };
@@ -794,7 +831,7 @@ function App() {
   // Instant-response roll request with input buffering: a tap during the last
   // step of a move animation is queued and fires the moment the board is free.
   const requestRoll = () => {
-    if (!busy && !rollingRef.current && state.diceValue === null && !state.winner && !currentIsBot) {
+    if (!busy && !rollingRef.current && state.phase === 'rolling' && !state.winner && !currentIsBot) {
       void handleRoll();
       return;
     }
@@ -814,7 +851,7 @@ function App() {
   useEffect(() => {
     if (pendingRollAt.current === null) return;
     if (busy || rollingRef.current || state.winner || currentIsBot) return;
-    if (state.diceValue !== null) return;
+    if (state.phase !== 'rolling') return;
     // Generous enough to cover a full move animation, short enough that a tap
     // from a previous turn can never roll for you.
     const fresh = Date.now() - pendingRollAt.current < 2500;
@@ -825,13 +862,14 @@ function App() {
 
   // Reads live refs so a delayed caller (auto-move timer, bot) can never act on
   // a stale snapshot of the game.
-  const moveToken = (tokenId: string) => {
+  const moveToken = (tokenId: string, dice: number) => {
     const s = stateRef.current;
-    if (animRef.current || s.diceValue === null) return;
+    if (animRef.current || s.phase !== 'moving' || !s.diceQueue.includes(dice)) return;
     const token = s.tokens.find(t => t.id === tokenId);
     if (!token) return;
-    const path = getMovePath(token, s.diceValue);
-    setAnim({ tokenId, path, step: -1 }); // -1 = wind-up first
+    const path = getMovePath(token, dice);
+    setSelectedDice(null);
+    setAnim({ tokenId, path, step: -1, dice }); // -1 = wind-up first
   };
 
   // One tick per cell entered: fires as the token renders in each new cell, so
@@ -845,15 +883,15 @@ function App() {
   }, [anim]);
 
   const handleTokenClick = (tokenId: string) => {
-    if (busy || currentIsBot) return;
-    moveToken(tokenId);
+    if (busy || currentIsBot || activeDice === null) return;
+    moveToken(tokenId, activeDice);
   };
 
   // No legal moves: hold the rolled face just long enough to read, then move
   // on. No banner, no prompt — the turn simply advances.
   useEffect(() => {
-    if (state.winner || busy || state.diceValue === null) return;
-    if (legalMoves.length > 0) return;
+    if (state.winner || busy || state.phase !== 'moving') return;
+    if (playableDice.length > 0) return;
     playSound('unlucky');
     const t = setTimeout(() => setState(s => passTurn(s)), 350);
     return () => clearTimeout(t);
@@ -872,37 +910,46 @@ function App() {
   // inside the 400ms window. A cancel that landed while `busy` was momentarily
   // true left nothing to reschedule it, so the player was stuck tapping. The
   // timer now survives re-renders and re-validates against live refs instead.
+  // With a queue, "no real choice" means one spendable value AND one distinct
+  // outcome for it. Keyed on the queue itself rather than rollSeq, so it also
+  // fires for the second value of a 6,6,3 turn once the first is spent.
+  const autoKey = `${rollSeq}:${state.diceQueue.join(',')}`;
   useEffect(() => {
     if (!autoMoveSingles || currentIsBot || busy) return;
-    if (state.winner || state.diceValue === null) return;
-    if (autoScheduledRef.current === rollSeq) return;
-    const outcomes = getDistinctMoveOutcomes(state, state.diceValue);
+    if (state.winner || state.phase !== 'moving') return;
+    if (autoScheduledKeyRef.current === autoKey) return;
+    const spendable = getPlayableDice(state);
+    if (spendable.length !== 1) return;
+    const dice = spendable[0];
+    const outcomes = getDistinctMoveOutcomes(state, dice);
     if (outcomes.length !== 1) return;
 
-    autoScheduledRef.current = rollSeq;
+    autoScheduledKeyRef.current = autoKey;
     const tokenId = outcomes[0].id;
     // Brief delay so the highlight is visible before the token sets off.
     setTimeout(() => {
       const s = stateRef.current;
-      if (animRef.current || s.winner || s.diceValue === null) return;
-      const stillOne = getDistinctMoveOutcomes(s, s.diceValue);
-      if (stillOne.length === 1 && stillOne[0].id === tokenId) moveToken(tokenId);
+      if (animRef.current || s.winner || s.phase !== 'moving') return;
+      const still = getPlayableDice(s);
+      if (still.length !== 1 || still[0] !== dice) return;
+      const stillOne = getDistinctMoveOutcomes(s, dice);
+      if (stillOne.length === 1 && stillOne[0].id === tokenId) moveToken(tokenId, dice);
     }, timings.autoMove);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rollSeq, state, busy, currentIsBot, autoMoveSingles, timings.autoMove]);
+  }, [autoKey, state, busy, currentIsBot, autoMoveSingles, timings.autoMove]);
 
   // Bot autoplay: roll, then move, with small delays for readability.
   // (The shared no-move effect above handles the bot's pass case too.)
   useEffect(() => {
     if (!currentIsBot || busy || state.winner) return;
-    if (state.diceValue === null) {
+    if (state.phase === 'rolling') {
       const t = setTimeout(() => void handleRoll(), timings.botRoll);
       return () => clearTimeout(t);
     }
-    if (legalMoves.length === 0) return;
+    if (playableDice.length === 0) return;
     const t = setTimeout(async () => {
-      const tokenId = await ruleBasedBot(state, legalMoves, state.diceValue!);
-      moveToken(tokenId);
+      const choice = await ruleBasedBot(stateRef.current);
+      if (choice) moveToken(choice.tokenId, choice.dice);
     }, timings.botMove);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -920,9 +967,11 @@ function App() {
     setRolling(false);
     pendingRollAt.current = null;
     rollingRef.current = false;
-    autoScheduledRef.current = -1;
+    autoScheduledKeyRef.current = null;
     lastTickRef.current = null;
     animRef.current = null;
+    setSelectedDice(null);
+    setRolledThisTurn([]);
   };
 
   const startGame = (seats: PlayerColor[], bots: Set<PlayerColor>) => {
@@ -1011,6 +1060,39 @@ function App() {
 
       {banner && <div className="banner">{banner}</div>}
 
+      {rolledThisTurn.length > 0 && !state.winner && (
+        <div className="dice-tray" role="group" aria-label="Rolled dice">
+          {(() => {
+            // The queue holds only unspent values, so match each rolled value
+            // against a working copy to tell spent from unspent.
+            const unspent = [...state.diceQueue];
+            return rolledThisTurn.map((value, i) => {
+              const at = unspent.indexOf(value);
+              const spent = at === -1;
+              if (!spent) unspent.splice(at, 1);
+              const playable = !spent && playableDice.includes(value);
+              const isActive = playable && value === activeDice;
+              return (
+                <button
+                  key={i}
+                  className={[
+                    'tray-die',
+                    spent ? 'tray-spent' : '',
+                    isActive ? 'tray-active' : '',
+                    !spent && !playable ? 'tray-dead' : '',
+                  ].join(' ')}
+                  disabled={!playable || currentIsBot}
+                  onClick={() => setSelectedDice(value)}
+                  aria-label={`${value}${spent ? ', spent' : ''}`}
+                >
+                  {value}
+                </button>
+              );
+            });
+          })()}
+        </div>
+      )}
+
       <div className="table">
         {[TOP_ROW, BOTTOM_ROW].map((rowColors, rowIdx) => (
           <div className="table-row" key={rowIdx} style={{ order: rowIdx === 0 ? 0 : 2 }}>
@@ -1031,7 +1113,7 @@ function App() {
                     !state.winner &&
                     // rollable now, or mid-move-animation (taps near the end
                     // are buffered by requestRoll and fire right after)
-                    (state.diceValue === null || anim !== null)
+                    (state.phase === 'rolling' || anim !== null)
                   }
                   dieLanding={dieLanding}
                   onRoll={requestRoll}

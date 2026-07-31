@@ -1,16 +1,27 @@
 import type { GameState, Token } from './types';
-import { applyMove, START_OFFSET, SAFE_SQUARES, FINISH, TRACK_END } from './engine';
+import {
+  applyMove,
+  getLegalMoves,
+  getPlayableDice,
+  START_OFFSET,
+  SAFE_SQUARES,
+  FINISH,
+  TRACK_END,
+} from './engine';
+
+/** One allocation: spend `dice` from the queue on `tokenId`. */
+export interface BotMove {
+  tokenId: string;
+  dice: number;
+}
 
 /**
- * A bot picks one of the legal tokens to move. The interface is deliberately
- * minimal so an LLM-backed personality bot can be swapped in later without
- * touching the engine: anything that maps (state, legalMoves, dice) -> tokenId.
+ * A bot chooses which queued value to spend and which token to spend it on.
+ * The interface is deliberately minimal so an LLM-backed personality bot can
+ * be swapped in later without touching the engine: state -> one allocation.
+ * Returns null when nothing is playable.
  */
-export type GetBotMove = (
-  state: GameState,
-  legalMoves: Token[],
-  dice: number,
-) => string | Promise<string>;
+export type GetBotMove = (state: GameState) => BotMove | null | Promise<BotMove | null>;
 
 function isSafePosition(token: Token, position: number): boolean {
   if (position > TRACK_END) return true; // home column / finished — unreachable by opponents
@@ -39,16 +50,27 @@ function scoreMove(state: GameState, token: Token, dice: number): number {
   return score;
 }
 
-/** Default rule-based bot: capture > reach-safety > progress. */
-export const ruleBasedBot: GetBotMove = (state, legalMoves, dice) => {
-  let best = legalMoves[0];
+/**
+ * Default rule-based bot: capture > reach-safety > progress.
+ *
+ * With a queue of several values it scores every (value, token) pairing and
+ * takes the single best one, so it will happily spend a 6 to break a token out
+ * before spending a 3 elsewhere — or the reverse, if that scores higher.
+ * Ties break toward spending the larger value first, which keeps the awkward
+ * small numbers in hand for the home column.
+ */
+export const ruleBasedBot: GetBotMove = state => {
+  let best: BotMove | null = null;
   let bestScore = -Infinity;
-  for (const token of legalMoves) {
-    const score = scoreMove(state, token, dice);
-    if (score > bestScore) {
-      bestScore = score;
-      best = token;
+
+  for (const dice of getPlayableDice(state)) {
+    for (const token of getLegalMoves(state, dice)) {
+      const score = scoreMove(state, token, dice);
+      if (score > bestScore || (score === bestScore && best !== null && dice > best.dice)) {
+        bestScore = score;
+        best = { tokenId: token.id, dice };
+      }
     }
   }
-  return best.id;
+  return best;
 };

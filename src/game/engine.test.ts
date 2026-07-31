@@ -8,12 +8,14 @@ import {
   passTurn,
   getCapturingMoves,
   getDistinctMoveOutcomes,
+  getPlayableDice,
   getLeadingToken,
   SAFE_SQUARES,
   START_OFFSET,
   FINISH,
   TRACK_END,
   HOME_COLUMN_LENGTH,
+  DEFAULT_RULES,
 } from './engine';
 import { getTokenCell, HOME_STRETCH } from './board';
 import type { GameState, HouseRules } from './types';
@@ -186,33 +188,45 @@ describe('three sixes forfeit', () => {
 
     state = registerDiceRoll(state, 6);
     expect(state.consecutiveSixes).toBe(1);
-    expect(state.diceValue).toBe(6);
+    expect(state.diceQueue).toEqual([6]);
+    expect(state.phase).toBe('rolling'); // rollAllFirst: keep rolling
 
-    state = registerDiceRoll({ ...state, diceValue: null }, 6);
+    state = registerDiceRoll(state, 6);
     expect(state.consecutiveSixes).toBe(2);
+    expect(state.diceQueue).toEqual([6, 6]);
 
-    state = registerDiceRoll({ ...state, diceValue: null }, 6);
-    expect(state.diceValue).toBeNull();
+    state = registerDiceRoll(state, 6);
+    // Whole turn voided: the queued sixes are discarded unspent.
+    expect(state.diceQueue).toEqual([]);
     expect(state.consecutiveSixes).toBe(0);
     expect(state.currentPlayer).toBe('green');
     expect(state.lastAction).toEqual({ type: 'forfeitSixes', player: 'red' });
   });
 
-  it('a non-6 resets the consecutive counter', () => {
+  it('a non-6 ends the rolling phase and resets the counter', () => {
     let state = createInitialState();
     state = registerDiceRoll(state, 6);
-    state = registerDiceRoll({ ...state, diceValue: null }, 4);
+    state = registerDiceRoll(state, 4);
     expect(state.consecutiveSixes).toBe(0);
-    expect(state.diceValue).toBe(4);
+    expect(state.diceQueue).toEqual([6, 4]);
+    expect(state.phase).toBe('moving');
   });
 });
 
 describe('extra turns', () => {
-  it('rolling a 6 keeps the turn after moving', () => {
-    const state = createInitialState();
+  it('rolling a 6 keeps the turn after moving, in classic order', () => {
+    // With rollAllFirst the 6 already bought its extra roll while rolling, so
+    // this only applies when the classic order is restored.
+    const state = createInitialState(undefined, { ...DEFAULT_RULES, rollAllFirst: false });
     setPos(state, 'red-0', 10);
     const result = applyMove(state, 'red-0', 6);
     expect(result.currentPlayer).toBe('red');
+  });
+
+  it('with roll-all-first a 6 does not also grant an extra turn after moving', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 10);
+    expect(applyMove(state, 'red-0', 6).currentPlayer).toBe('green');
   });
 
   it('an ordinary move passes the turn', () => {
@@ -360,19 +374,24 @@ describe('distinct move outcomes', () => {
   it('collapses two stacked tokens into a single outcome (the 6/6/3 case)', () => {
     let state = createInitialState();
 
-    // Roll 6: bring red-0 out. Roll 6 again: bring red-1 out. Both now sit on
-    // red's start square, position 1.
+    // Roll out the whole turn first: 6, 6, then a 3 ends the rolling phase.
     state = registerDiceRoll(state, 6);
+    state = registerDiceRoll(state, 6);
+    state = registerDiceRoll(state, 3);
+    expect(state.diceQueue).toEqual([6, 6, 3]);
+    expect(state.phase).toBe('moving');
+
+    // Spend both sixes bringing two tokens out onto red's start square.
     state = applyMove(state, 'red-0', 6);
-    expect(state.currentPlayer).toBe('red'); // extra turn from the 6
-    state = registerDiceRoll(state, 6);
+    expect(state.currentPlayer).toBe('red'); // still allocating
+    expect(state.diceQueue).toEqual([6, 3]);
     state = applyMove(state, 'red-1', 6);
+    expect(state.diceQueue).toEqual([3]);
 
     const stacked = state.tokens.filter(t => t.id === 'red-0' || t.id === 'red-1');
     expect(stacked.map(t => t.position)).toEqual([1, 1]);
 
-    // Roll 3: two legal moves, but they are indistinguishable.
-    state = registerDiceRoll(state, 3);
+    // The remaining 3 offers two legal moves that are indistinguishable.
     expect(getLegalMoves(state, 3).map(t => t.id).sort()).toEqual(['red-0', 'red-1']);
     expect(getDistinctMoveOutcomes(state, 3)).toHaveLength(1);
   });
@@ -421,15 +440,11 @@ describe('distinct move outcomes', () => {
 
 describe('house rules', () => {
   const withRules = (overrides: Partial<HouseRules>): GameState =>
-    createInitialState(undefined, {
-      mandatoryCapture: false,
-      quickMode: false,
-      threeSixesSendsLeaderToBase: false,
-      ...overrides,
-    });
+    createInitialState(undefined, { ...DEFAULT_RULES, ...overrides });
 
   it('are all off by default', () => {
     expect(createInitialState().rules).toEqual({
+      rollAllFirst: true, // the turn-order default, not an optional rule
       mandatoryCapture: false,
       quickMode: false,
       threeSixesSendsLeaderToBase: false,
@@ -486,8 +501,8 @@ describe('house rules', () => {
     setPos(state, 'red-0', 30);
 
     state = registerDiceRoll(state, 6);
-    state = registerDiceRoll({ ...state, diceValue: null }, 6);
-    state = registerDiceRoll({ ...state, diceValue: null }, 6);
+    state = registerDiceRoll(state, 6);
+    state = registerDiceRoll(state, 6);
 
     expect(state.tokens.find(t => t.id === 'red-0')!.position).toBe(-1);
     expect(state.lastAction).toMatchObject({ type: 'forfeitSixes', penalizedTokenId: 'red-0' });
@@ -499,11 +514,84 @@ describe('house rules', () => {
     setPos(state, 'red-0', 30);
 
     state = registerDiceRoll(state, 6);
-    state = registerDiceRoll({ ...state, diceValue: null }, 6);
-    state = registerDiceRoll({ ...state, diceValue: null }, 6);
+    state = registerDiceRoll(state, 6);
+    state = registerDiceRoll(state, 6);
 
     expect(state.tokens.find(t => t.id === 'red-0')!.position).toBe(30);
     expect(state.currentPlayer).toBe('green');
+  });
+});
+
+describe('roll-all-first turn order', () => {
+  it('accumulates sixes then stops on a non-6', () => {
+    let state = createInitialState();
+    state = registerDiceRoll(state, 6);
+    expect(state.phase).toBe('rolling');
+    state = registerDiceRoll(state, 2);
+    expect(state.phase).toBe('moving');
+    expect(state.diceQueue).toEqual([6, 2]);
+  });
+
+  it('spends values in any order and only ends the turn once none is playable', () => {
+    let state = createInitialState();
+    setPos(state, 'red-0', 10);
+    state = { ...state, diceQueue: [5, 2], phase: 'moving' };
+
+    // Spend the 2 first — order is the player's choice.
+    state = applyMove(state, 'red-0', 2);
+    expect(state.diceQueue).toEqual([5]);
+    expect(state.currentPlayer).toBe('red');
+    expect(state.tokens.find(t => t.id === 'red-0')!.position).toBe(12);
+
+    state = applyMove(state, 'red-0', 5);
+    expect(state.diceQueue).toEqual([]);
+    expect(state.currentPlayer).toBe('green'); // queue spent, no extra earned
+  });
+
+  it('discards queued values that nothing can use', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 10);
+    // A 4 is playable; the 3 will be too, so spend down to an unusable value.
+    const queued = { ...state, diceQueue: [6, 4], phase: 'moving' as const };
+    // All other red tokens are in base, so only a 6 can be used by them; after
+    // spending the 6 the 4 still works, so instead check the reverse: with all
+    // tokens home-bound and only an overshooting value left, the turn ends.
+    const stuck = {
+      ...state,
+      tokens: state.tokens.map(t =>
+        t.color === 'red' && t.id !== 'red-0' ? { ...t, position: FINISH } : t,
+      ),
+      diceQueue: [1, 6],
+      phase: 'moving' as const,
+    };
+    setPos(stuck, 'red-0', FINISH - 1); // needs exactly 1; a 6 overshoots
+    expect(getPlayableDice(stuck)).toEqual([1]);
+
+    const after = applyMove(stuck, 'red-0', 1);
+    // Reaching home earns another roll, so the unusable 6 is dropped and the
+    // player rolls again rather than being stranded holding it.
+    expect(after.diceQueue).toEqual([]);
+    expect(after.phase).toBe('rolling');
+    expect(getPlayableDice(queued).length).toBeGreaterThan(0);
+  });
+
+  it('a capture sends the player back to rolling once the queue is spent', () => {
+    let state = createInitialState();
+    setPos(state, 'red-0', 1);
+    setPos(state, 'green-0', 44); // global 4 — captured by a 4
+    state = { ...state, diceQueue: [4], phase: 'moving' };
+
+    state = applyMove(state, 'red-0', 4);
+    expect(state.currentPlayer).toBe('red');
+    expect(state.phase).toBe('rolling');
+    expect(state.diceQueue).toEqual([]);
+  });
+
+  it('classic order moves after every roll instead of accumulating', () => {
+    let state = createInitialState(undefined, { ...DEFAULT_RULES, rollAllFirst: false });
+    state = registerDiceRoll(state, 6);
+    expect(state.phase).toBe('moving');
+    expect(state.diceQueue).toEqual([6]);
   });
 });
 
@@ -512,7 +600,8 @@ describe('extra-turn chains keep re-evaluating legal moves', () => {
   // stay correct on the third (and later) roll of one extra-turn chain, not
   // just the first.
   it('reports exactly one legal move on every roll of a 3-deep chain', () => {
-    let state = createInitialState();
+    // Classic order, so each roll is moved before the next one is made.
+    let state = createInitialState(undefined, { ...DEFAULT_RULES, rollAllFirst: false });
     setPos(state, 'red-0', FINISH - 6);
     setPos(state, 'red-1', FINISH - 5);
     setPos(state, 'red-2', FINISH - 4);
@@ -520,7 +609,7 @@ describe('extra-turn chains keep re-evaluating legal moves', () => {
 
     // Roll 1 of the chain: only red-0 can land exactly on the centre.
     state = registerDiceRoll(state, 6);
-    expect(state.diceValue).toBe(6);
+    expect(state.diceQueue).toEqual([6]);
     let legal = getLegalMoves(state, 6);
     expect(legal.map(t => t.id)).toEqual(['red-0']);
     state = applyMove(state, 'red-0', 6);
@@ -548,7 +637,8 @@ describe('turn passing and 2-3 player games', () => {
     const state = registerDiceRoll(createInitialState(), 2);
     const result = passTurn(state);
     expect(result.currentPlayer).toBe('green');
-    expect(result.diceValue).toBeNull();
+    expect(result.diceQueue).toEqual([]);
+    expect(result.phase).toBe('rolling');
     expect(result.consecutiveSixes).toBe(0);
     expect(result.lastAction).toEqual({ type: 'pass', player: 'red' });
   });

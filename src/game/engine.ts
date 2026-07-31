@@ -1,7 +1,8 @@
-import type { GameState, Token, PlayerColor, HouseRules } from './types';
+import type { GameState, Token, PlayerColor, HouseRules, LastAction } from './types';
 
-/** Standard Ludo: every optional rule off. */
+/** Standard Ludo: every optional rule off, roll-all-first on. */
 export const DEFAULT_RULES: HouseRules = {
+  rollAllFirst: true,
   mandatoryCapture: false,
   quickMode: false,
   threeSixesSendsLeaderToBase: false,
@@ -28,7 +29,9 @@ export function createInitialState(
     tokens,
     players,
     currentPlayer: players[0],
-    diceValue: null,
+    diceQueue: [],
+    phase: 'rolling',
+    extraRoll: false,
     winner: null,
     consecutiveSixes: 0,
     lastAction: null,
@@ -184,18 +187,45 @@ function getNextPlayer(state: GameState): PlayerColor {
   return players[(players.indexOf(currentPlayer) + 1) % players.length];
 }
 
+/** The distinct queued values that currently have at least one legal move. */
+export function getPlayableDice(state: GameState): number[] {
+  const seen = new Set<number>();
+  const playable: number[] = [];
+  for (const value of state.diceQueue) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    if (getLegalMoves(state, value).length > 0) playable.push(value);
+  }
+  return playable;
+}
+
+/** Everything that resets when a turn ends, whoever it passes to. */
+function endOfTurn() {
+  return { diceQueue: [], phase: 'rolling' as const, consecutiveSixes: 0, extraRoll: false };
+}
+
 /**
- * Records a dice roll. Tracks consecutive 6s and forfeits the turn (no move allowed)
- * on the 3rd 6 in a row, per classic Ludo rules.
+ * Records a dice roll onto this turn's queue.
+ *
+ * With `rollAllFirst` (the default) a 6 keeps the player in the rolling phase,
+ * so values accumulate — 6, 6, 3 — and are spent afterwards in any order. A
+ * third consecutive 6 voids the whole turn before any move is made. Without
+ * the rule, every roll moves straight to the moving phase and a 6 earns its
+ * extra turn after the move instead.
  */
 export function registerDiceRoll(state: GameState, dice: number): GameState {
   if (dice !== 6) {
-    return { ...state, diceValue: dice, consecutiveSixes: 0 };
+    return {
+      ...state,
+      diceQueue: [...state.diceQueue, dice],
+      phase: 'moving',
+      consecutiveSixes: 0,
+    };
   }
   const consecutiveSixes = state.consecutiveSixes + 1;
   if (consecutiveSixes >= 3) {
-    // The third 6 is forfeited and the turn ends. House rule optionally adds
-    // a penalty: the player's leading token also goes back to base.
+    // The third 6 is forfeited and the turn ends, discarding anything still
+    // queued. House rule optionally sends the leading token back to base too.
     let tokens = state.tokens;
     let penalizedTokenId: string | undefined;
     if (state.rules.threeSixesSendsLeaderToBase) {
@@ -207,23 +237,26 @@ export function registerDiceRoll(state: GameState, dice: number): GameState {
     }
     return {
       ...state,
+      ...endOfTurn(),
       tokens,
-      diceValue: null,
-      consecutiveSixes: 0,
       currentPlayer: getNextPlayer(state),
       lastAction: { type: 'forfeitSixes', player: state.currentPlayer, penalizedTokenId },
     };
   }
-  return { ...state, diceValue: dice, consecutiveSixes };
+  return {
+    ...state,
+    diceQueue: [...state.diceQueue, dice],
+    phase: state.rules.rollAllFirst ? 'rolling' : 'moving',
+    consecutiveSixes,
+  };
 }
 
-/** Advances the turn when the current player has no legal moves for the rolled dice. */
+/** Advances the turn when nothing in the queue can be played. */
 export function passTurn(state: GameState): GameState {
   return {
     ...state,
+    ...endOfTurn(),
     currentPlayer: getNextPlayer(state),
-    diceValue: null,
-    consecutiveSixes: 0,
     lastAction: { type: 'pass', player: state.currentPlayer },
   };
 }
@@ -265,14 +298,39 @@ export function applyMove(state: GameState, tokenId: string, dice: number): Game
     : null;
 
   const reachedHome = token.position === FINISH;
-  const extraTurn = dice === 6 || captured.length > 0 || reachedHome;
+  // A 6 only buys an extra turn in classic order; with rollAllFirst it has
+  // already bought an extra roll during the rolling phase.
+  const earnedRoll =
+    captured.length > 0 || reachedHome || (!state.rules.rollAllFirst && dice === 6);
+  const extraRoll = state.extraRoll || earnedRoll;
 
+  // Spend exactly one instance of the value used.
+  const spentAt = state.diceQueue.indexOf(dice);
+  const diceQueue =
+    spentAt === -1
+      ? [...state.diceQueue]
+      : [...state.diceQueue.slice(0, spentAt), ...state.diceQueue.slice(spentAt + 1)];
+
+  const lastAction: LastAction = {
+    type: 'move',
+    tokenId,
+    from,
+    to: token.position,
+    captured,
+    penalizedTokenId,
+  };
+  const moved: GameState = { ...state, tokens, diceQueue, winner, lastAction };
+  if (winner) return { ...moved, ...endOfTurn() };
+
+  // Values left over that nothing can use are discarded rather than stranding
+  // the turn — the player keeps going only while something is playable.
+  if (getPlayableDice(moved).length > 0) return { ...moved, phase: 'moving' };
+
+  // Queue exhausted: an earned extra turn sends the player back to rolling,
+  // otherwise play passes on.
   return {
-    ...state,
-    tokens,
-    currentPlayer: extraTurn ? state.currentPlayer : getNextPlayer(state),
-    diceValue: null,
-    winner,
-    lastAction: { type: 'move', tokenId, from, to: token.position, captured, penalizedTokenId },
+    ...moved,
+    ...endOfTurn(),
+    currentPlayer: extraRoll ? state.currentPlayer : getNextPlayer(state),
   };
 }
