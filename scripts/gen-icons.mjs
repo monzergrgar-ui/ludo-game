@@ -22,7 +22,10 @@ for (const { src, out, size } of jobs) {
   const svg = readFileSync(join(here, src));
   await sharp(svg, { density: 384 })
     .resize(size, size, { fit: 'cover' })
-    .png({ compressionLevel: 9 })
+    // Palette quantisation: the artwork is flat enough that 128 colours is
+    // visually identical and roughly a quarter of the size. These icons are
+    // precached by the service worker, so the saving is worth having.
+    .png({ compressionLevel: 9, palette: true, colours: 48, dither: 1 })
     .toFile(join(publicDir, out));
   console.log(`wrote public/${out} (${size}x${size})`);
 }
