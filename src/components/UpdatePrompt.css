@@ -1,0 +1,49 @@
+.update-prompt {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: linear-gradient(180deg, #1c3055, #101f3c);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  animation: update-in 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.update-prompt:hover {
+  border-color: rgba(255, 215, 94, 0.6);
+}
+
+.update-prompt:active {
+  transform: translateY(1px);
+}
+
+@keyframes update-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* quiet pulsing dot — signals "something's ready" without demanding attention */
+.update-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #ffd75e;
+  animation: update-dot 1.6s ease-in-out infinite;
+}
+
+@keyframes update-dot {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+.update-text strong {
+  color: #ffd75e;
+  font-weight: 700;
+}

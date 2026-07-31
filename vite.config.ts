@@ -7,7 +7,11 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt', not 'autoUpdate': a new build waits instead of taking over
+      // mid-game. The app offers a "tap to update" banner, and if it is
+      // ignored the waiting worker activates on its own once every tab is
+      // closed — i.e. the next natural launch.
+      registerType: 'prompt',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Ludo Game',
