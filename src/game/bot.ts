@@ -1,5 +1,5 @@
 import type { GameState, Token } from './types';
-import { applyMove, START_OFFSET, SAFE_SQUARES } from './engine';
+import { applyMove, START_OFFSET, SAFE_SQUARES, FINISH, TRACK_END } from './engine';
 
 /**
  * A bot picks one of the legal tokens to move. The interface is deliberately
@@ -13,7 +13,7 @@ export type GetBotMove = (
 ) => string | Promise<string>;
 
 function isSafePosition(token: Token, position: number): boolean {
-  if (position > 51) return true; // home stretch / finished — unreachable by opponents
+  if (position > TRACK_END) return true; // home column / finished — unreachable by opponents
   if (position < 1) return false;
   const global = (START_OFFSET[token.color] + position - 1) % 52;
   return SAFE_SQUARES.includes(global);
@@ -29,9 +29,9 @@ function scoreMove(state: GameState, token: Token, dice: number): number {
   // Captures dominate everything else.
   if (action?.type === 'move') score += action.captured.length * 100;
   // Getting a token all the way home.
-  if (moved.position === 58) score += 60;
+  if (moved.position === FINISH) score += 60;
   // Ending on a square opponents can't capture.
-  if (moved.position !== 58 && isSafePosition(moved, moved.position)) score += 40;
+  if (moved.position !== FINISH && isSafePosition(moved, moved.position)) score += 40;
   // Bringing a fresh token into play.
   if (token.position === -1) score += 25;
   // Raw progress: prefer advancing the token that's furthest along.

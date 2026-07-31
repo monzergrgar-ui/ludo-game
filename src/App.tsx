@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import Board from './components/Board';
 import {
   createInitialState,
@@ -18,12 +18,7 @@ import {
 } from './game/fairness';
 import { ruleBasedBot } from './game/bot';
 import { playSound, soundSettings, vibrate } from './game/sound';
-import {
-  getCommentaryLine,
-  isUnderThreat,
-  isTrailing,
-  type CommentaryEvent,
-} from './game/commentary';
+import { emitCommentary, isUnderThreat, isTrailing } from './game/commentary';
 import { COLORS, getTokenCell } from './game/board';
 import { DEFAULT_RULES } from './game/engine';
 import type { PlayerColor, Token, HouseRules } from './game/types';
@@ -91,23 +86,47 @@ const DICE_TICK_DELAYS = [50, 50, 50, 50, 50, 50, 50, 100, 50];
 interface DieProps {
   value: number | null;
   rolling: boolean;
-  disabled: boolean;
+  /** Whether a roll is currently allowed. Never disables the element. */
+  canRoll: boolean;
   inactive: boolean;
   /** Squash-bounce + face punch right after the roll settles. */
   landing: boolean;
-  onClick: () => void;
+  onRoll: () => void;
 }
 
-function Die({ value, rolling, disabled, inactive, landing, onClick }: DieProps) {
+/**
+ * The die is deliberately never a `disabled` button: a disabled element fires
+ * no pointer events at all, so a tap arriving in the split second before state
+ * settles was silently swallowed. It stays interactive, acknowledges every
+ * touch visually, and lets `onRoll` decide whether the tap rolls now, gets
+ * buffered, or is ignored.
+ */
+function Die({ value, rolling, canRoll, inactive, landing, onRoll }: DieProps) {
   const face = value ?? 6;
+  const [pressed, setPressed] = useState(false);
+
+  // pointerdown, not click: fires on touch-down with no ~300ms tap delay and
+  // no chance of being lost to a scroll/settle in between down and up.
+  const handlePointerDown = (e: ReactPointerEvent) => {
+    e.preventDefault(); // no double-tap zoom, no synthetic click afterwards
+    setPressed(true);
+    setTimeout(() => setPressed(false), 140);
+    onRoll();
+  };
+
   return (
     <button
-      className={`die ${rolling ? 'die-tumble' : ''} ${inactive ? 'die-dark' : ''} ${
-        landing ? 'die-land' : ''
-      }`}
-      onClick={onClick}
-      disabled={disabled}
+      type="button"
+      className={[
+        'die',
+        rolling ? 'die-tumble' : '',
+        inactive ? 'die-dark' : '',
+        landing ? 'die-land' : '',
+        pressed ? 'die-pressed' : '',
+      ].join(' ')}
+      onPointerDown={handlePointerDown}
       aria-label="Roll the die"
+      aria-disabled={!canRoll}
     >
       <svg className="die-face" viewBox="0 0 100 100" aria-hidden="true">
         {PIP_POSITIONS[face].map(([cx, cy], i) => (
@@ -157,10 +176,10 @@ function CornerPanel({
       <Die
         value={face}
         rolling={rolling && active}
-        disabled={!canRoll}
+        canRoll={canRoll}
         inactive={!active}
         landing={dieLanding && active}
-        onClick={onRoll}
+        onRoll={onRoll}
       />
     </div>
   );
@@ -546,7 +565,6 @@ function App() {
   const [anim, setAnim] = useState<AnimState | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [shaking, setShaking] = useState(false);
-  const [feed, setFeed] = useState<string[]>([]);
   const [muted, setMuted] = useState(soundSettings.muted);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [speed, setSpeed] = useState<GameSpeed>('normal');
@@ -592,10 +610,6 @@ function App() {
   useEffect(() => {
     providerRef.current.getCommitment().then(setCommitment);
   }, []);
-
-  const pushComment = (event: CommentaryEvent) => {
-    setFeed(f => [getCommentaryLine(event), ...f].slice(0, 3));
-  };
 
   const applyMuted = (m: boolean) => {
     soundSettings.muted = m;
@@ -653,7 +667,7 @@ function App() {
         }, 80);
         setTimeout(() => setFlights(new Map()), 800);
         const victim = result.tokens.find(t => t.id === captured[0])!.color;
-        pushComment({ type: wasTrailing ? 'comeback' : 'capture', player: mover, victim });
+        emitCommentary({ type: wasTrailing ? 'comeback' : 'capture', player: mover, victim });
       } else if (result.winner) {
         // win sequence effect takes over
       } else if (reachedHome) {
@@ -661,9 +675,9 @@ function App() {
         vibrate([20, 30, 25]);
         setHomedId(movedId);
         setTimeout(() => setHomedId(null), 750);
-        pushComment({ type: wasTrailing ? 'comeback' : 'home', player: mover });
+        emitCommentary({ type: wasTrailing ? 'comeback' : 'home', player: mover });
       } else if (isUnderThreat(result, movedId) && Math.random() < 0.5) {
-        pushComment({ type: 'nearMiss', player: mover });
+        emitCommentary({ type: 'nearMiss', player: mover });
       }
 
       if (!reachedHome && !result.winner) {
@@ -673,7 +687,7 @@ function App() {
       }
 
       if (result.winner) {
-        pushComment({ type: 'win', player: result.winner });
+        emitCommentary({ type: 'win', player: result.winner });
       }
 
       setState(result);
@@ -722,7 +736,7 @@ function App() {
   useEffect(() => {
     if (state.lastAction?.type !== 'forfeitSixes') return;
     setBanner(`${state.lastAction.player.toUpperCase()} rolled three 6s — turn forfeited!`);
-    pushComment({ type: 'threeSixes', player: state.lastAction.player });
+    emitCommentary({ type: 'threeSixes', player: state.lastAction.player });
     const t = setTimeout(() => setBanner(null), 1800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -784,7 +798,11 @@ function App() {
       void handleRoll();
       return;
     }
-    if (anim && anim.step >= 0 && anim.path.length - anim.step <= 1) {
+    // Buffer any tap that lands while the board is busy, not just one in the
+    // final step of a move — a tap two cells from the end is just as
+    // deliberate, and dropping it is what made the die feel unresponsive.
+    // Staleness is judged when it fires, not here.
+    if (busy && !state.winner && !currentIsBot) {
       pendingRollAt.current = Date.now();
     }
   };
@@ -792,7 +810,9 @@ function App() {
   useEffect(() => {
     if (pendingRollAt.current === null) return;
     if (busy || state.winner || currentIsBot || state.diceValue !== null) return;
-    const fresh = Date.now() - pendingRollAt.current < 700;
+    // Generous enough to cover a full move animation, short enough that a tap
+    // from a previous turn can never roll for you.
+    const fresh = Date.now() - pendingRollAt.current < 2500;
     pendingRollAt.current = null;
     if (fresh) void handleRoll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -887,7 +907,6 @@ function App() {
     setAnim(null);
     setBanner(null);
     setFaces({});
-    setFeed([]);
     setFlights(new Map());
     setHitstop(false);
     setLandedId(null);
@@ -986,19 +1005,6 @@ function App() {
       </div>
 
       {banner && <div className="banner">{banner}</div>}
-
-      {feed.length > 0 && (
-        <div className="commentary" dir="rtl">
-          <span className="commentary-mic">🎙️</span>
-          <div className="commentary-lines">
-            {feed.map((line, i) => (
-              <p key={`${line}-${i}`} className={i === 0 ? 'commentary-latest' : 'commentary-old'}>
-                {line}
-              </p>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div className="table">
         {[TOP_ROW, BOTTOM_ROW].map((rowColors, rowIdx) => (

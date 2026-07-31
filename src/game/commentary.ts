@@ -89,6 +89,30 @@ export function getCommentaryLine(event: CommentaryEvent): string {
     .replaceAll('{victim}', event.victim ? PLAYER_NAMES_AR[event.victim] : '');
 }
 
+/** Payload delivered with every {@link COMMENTARY_EVENT} dispatch. */
+export interface CommentaryDetail {
+  event: CommentaryEvent;
+  line: string;
+}
+
+/** DOM event name carrying commentary moments. */
+export const COMMENTARY_EVENT = 'ludo:commentary';
+
+/**
+ * Announces a commentary moment. Nothing is rendered on screen — this is the
+ * seam a voice layer plugs into:
+ *
+ *   window.addEventListener(COMMENTARY_EVENT, e => speak(e.detail));
+ *
+ * `detail` carries both the raw event (so audio can be keyed off the type and
+ * players) and the resolved Arabic line.
+ */
+export function emitCommentary(event: CommentaryEvent): void {
+  if (typeof window === 'undefined') return;
+  const detail: CommentaryDetail = { event, line: getCommentaryLine(event) };
+  window.dispatchEvent(new CustomEvent<CommentaryDetail>(COMMENTARY_EVENT, { detail }));
+}
+
 /* --- event-detection helpers (pure, engine-independent) --- */
 
 function globalPosition(color: PlayerColor, position: number): number | null {

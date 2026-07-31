@@ -1,5 +1,5 @@
 import type { PlayerColor, Token } from './types';
-import { START_OFFSET, SAFE_SQUARES } from './engine';
+import { START_OFFSET, SAFE_SQUARES, FINISH, TRACK_END } from './engine';
 
 /** 15x15 unit grid, matches a classic Ludo board's cross layout. */
 export const BOARD_SIZE = 15;
@@ -50,12 +50,17 @@ export const RING: [number, number][] = [
   [7, 0], [6, 0],
 ];
 
-/** Each color's 6-cell private home stretch, leading from the ring into the center. */
+/**
+ * Each color's private home column: 5 cells running from the ring up to the
+ * edge of the centre goal, which occupies the 3x3 block from (6,6) to (9,9).
+ * The last cell stops flush against that block — a 6th cell would sit on top
+ * of the centre triangles, and the token would need an extra step to finish.
+ */
 export const HOME_STRETCH: Record<PlayerColor, [number, number][]> = {
-  red: [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5], [7, 6]],
-  green: [[1, 7], [2, 7], [3, 7], [4, 7], [5, 7], [6, 7]],
-  yellow: [[7, 13], [7, 12], [7, 11], [7, 10], [7, 9], [7, 8]],
-  blue: [[13, 7], [12, 7], [11, 7], [10, 7], [9, 7], [8, 7]],
+  red: [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5]],
+  green: [[1, 7], [2, 7], [3, 7], [4, 7], [5, 7]],
+  yellow: [[7, 13], [7, 12], [7, 11], [7, 10], [7, 9]],
+  blue: [[13, 7], [12, 7], [11, 7], [10, 7], [9, 7]],
 };
 
 /**
@@ -104,12 +109,12 @@ export function getTokenCell(token: Token): { row: number; col: number } {
     const [row, col] = BASE_SLOTS[color][tokenSlotIndex(token)];
     return { row: row - 0.42, col };
   }
-  if (position === 58) {
+  if (position === FINISH) {
     const [row, col] = FINISH_SLOTS[color][tokenSlotIndex(token)];
     return { row, col };
   }
-  if (position >= 52) {
-    const [row, col] = HOME_STRETCH[color][position - 52];
+  if (position > TRACK_END) {
+    const [row, col] = HOME_STRETCH[color][position - TRACK_END - 1];
     return { row: row + 0.5, col: col + 0.5 };
   }
   const globalIdx = (START_OFFSET[color] + position - 1) % 52;

@@ -162,55 +162,6 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* --- commentator feed (RTL Arabic) --- */
-
-.commentary {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin: 0 auto 12px;
-  max-width: 560px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 210, 80, 0.35);
-  text-align: right;
-}
-
-.commentary-mic {
-  font-size: 22px;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
-}
-
-.commentary-lines {
-  flex: 1;
-  min-width: 0;
-}
-
-.commentary-lines p {
-  margin: 0;
-}
-
-.commentary-latest {
-  color: #ffd75e;
-  font-size: 16.5px;
-  font-weight: 600;
-  line-height: 1.5;
-  animation: comment-in 0.35s ease;
-}
-
-.commentary-old {
-  color: rgba(255, 255, 255, 0.55);
-  font-size: 13px;
-  line-height: 1.5;
-  margin-top: 2px !important;
-}
-
-@keyframes comment-in {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 /* --- board, wooden frame, shake --- */
 
 .table {
@@ -381,11 +332,16 @@ body {
 
 /* small per-player die: a turn indicator, not a focal prop */
 .die {
+  position: relative;
   width: 38px;
   height: 38px;
   padding: 0;
   border: none;
   border-radius: 11px;
+  /* no 300ms tap delay, no double-tap zoom, no grey flash of our own */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
   background: linear-gradient(150deg, #ffffff 0%, #fdfdfb 45%, #ebe9e2 80%, #dcd9cf 100%);
   box-shadow:
     0 3px 0 #a8a397,
@@ -412,20 +368,26 @@ body {
   transform: translateY(-2px);
 }
 
-/* press = charge: scale down with a nervous little shake until release */
-.die:active:not(:disabled) {
-  animation: die-charge 0.3s ease-in-out infinite;
-  box-shadow:
-    0 2px 0 #a8a397,
-    0 3px 2px rgba(0, 0, 0, 0.2),
-    0 6px 10px rgba(0, 0, 0, 0.4),
-    inset 0 2px 3px rgba(255, 255, 255, 1),
-    inset 0 -3px 5px rgba(0, 0, 0, 0.1);
+/* Invisible hit area well beyond the 38px face — the die is small by design,
+   so the touch target is padded out to a comfortable ~52px without changing
+   the visual size. */
+.die::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 18px;
 }
 
-@keyframes die-charge {
-  0%, 100% { transform: scale(0.87) rotate(-2.5deg); }
-  50% { transform: scale(0.85) rotate(2.5deg); }
+/* Instant acknowledgement of every touch, whether or not the roll is legal,
+   so a tap never feels ignored. */
+.die-pressed {
+  animation: die-press 0.14s ease-out;
+}
+
+@keyframes die-press {
+  0% { transform: scale(1); }
+  45% { transform: scale(0.88); }
+  100% { transform: scale(1); }
 }
 
 /* landing: a quick scale punch in place — no travel, no residual tilt */
@@ -899,9 +861,5 @@ body {
 
   .die-face {
     padding: 13%;
-  }
-
-  .commentary-latest {
-    font-size: 15px;
   }
 }

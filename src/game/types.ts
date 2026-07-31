@@ -3,7 +3,7 @@ export type PlayerColor = 'red' | 'green' | 'yellow' | 'blue';
 export interface Token {
   id: string;
   color: PlayerColor;
-  /** -1 base | 1-51 shared track | 52-57 home stretch | 58 finished */
+  /** -1 base | 1-51 shared track | 52-56 home column | 57 finished (centre) */
   position: number;
 }
 

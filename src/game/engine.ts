@@ -40,6 +40,16 @@ export function createInitialState(
 export const START_OFFSET: Record<PlayerColor, number> = { red: 0, green: 13, yellow: 26, blue: 39 };
 export const SAFE_SQUARES = [0, 8, 13, 21, 26, 34, 39, 47];
 
+/** Last shared-track position; a token walks 51 ring squares from its start. */
+export const TRACK_END = 51;
+/** Coloured home column: 5 cells, positions 52-56. */
+export const HOME_COLUMN_LENGTH = 5;
+/**
+ * The centre goal. A token steps from the final home-column cell (56)
+ * straight into it — there is no square in between.
+ */
+export const FINISH = TRACK_END + HOME_COLUMN_LENGTH + 1; // 57
+
 function getGlobalPosition(color: PlayerColor, position: number): number | null {
   if (position < 1 || position > 51) return null;
   return (START_OFFSET[color] + position - 1) % 52;
@@ -66,17 +76,28 @@ function getGlobalOccupancy(tokens: Token[]): Map<number, Partial<Record<PlayerC
   return map;
 }
 
-/** A square with 2+ same-color tokens is a block: opponents can't land on it or pass through it. */
+/**
+ * A square with 2+ same-color tokens is a block: opponents can't land on it or
+ * pass through it. Two deliberate carve-outs:
+ *  - Your own blockade never restricts your own tokens.
+ *  - A blockade sitting on its owner's coloured START square is not a barrier.
+ *    Tokens pile up there naturally after a couple of sixes, and letting that
+ *    wall off a quarter of the board makes for a miserable game. This is a
+ *    house deviation from the strict rule, applied always.
+ */
 function isPathBlocked(tokens: Token[], token: Token, dice: number): boolean {
   const occupancy = getGlobalOccupancy(tokens);
   for (const relPos of getMovePath(token, dice)) {
-    if (relPos < 1 || relPos > 51) continue; // home stretch is private, never blocked
+    if (relPos < 1 || relPos > TRACK_END) continue; // home column is private
     const global = getGlobalPosition(token.color, relPos);
     if (global === null) continue;
     const counts = occupancy.get(global);
     if (!counts) continue;
     for (const color of colors) {
-      if (color !== token.color && (counts[color] ?? 0) >= 2) return true;
+      if (color === token.color) continue; // own tokens are never an obstacle
+      if ((counts[color] ?? 0) < 2) continue;
+      if (START_OFFSET[color] === global) continue; // blockade on its own start
+      return true;
     }
   }
   return false;
@@ -86,8 +107,8 @@ function canMove(state: GameState, token: Token, dice: number): boolean {
   if (token.position === -1) {
     if (dice !== 6) return false;
   } else {
-    if (token.position >= 58) return false;
-    if (token.position + dice > 58) return false; // must land exactly on 58
+    if (token.position >= FINISH) return false;
+    if (token.position + dice > FINISH) return false; // must land exactly on FINISH
   }
   return !isPathBlocked(state.tokens, token, dice);
 }
@@ -137,7 +158,7 @@ export function getDistinctMoveOutcomes(state: GameState, dice: number): Token[]
   for (const token of getLegalMoves(state, dice)) {
     const destination = destinationOf(token, dice);
     const captured = getCapturedIds(state.tokens, token.color, destination).sort().join(',');
-    // Destination covers home entry (58) and the home stretch implicitly.
+    // Destination covers home entry and the home column implicitly.
     const key = `${destination}|${captured}`;
     if (!byOutcome.has(key)) byOutcome.set(key, token);
   }
@@ -146,13 +167,13 @@ export function getDistinctMoveOutcomes(state: GameState, dice: number): Token[]
 
 /**
  * A player's most advanced token that is still in play — used by the house
- * rules that send the "leading token" back to base. Finished tokens (58) and
+ * rules that send the "leading token" back to base. Finished tokens and
  * tokens already in base are never eligible.
  */
 export function getLeadingToken(tokens: Token[], color: PlayerColor): Token | null {
   let leader: Token | null = null;
   for (const t of tokens) {
-    if (t.color !== color || t.position < 1 || t.position >= 58) continue;
+    if (t.color !== color || t.position < 1 || t.position >= FINISH) continue;
     if (!leader || t.position > leader.position) leader = t;
   }
   return leader;
@@ -237,13 +258,13 @@ export function applyMove(state: GameState, tokenId: string, dice: number): Game
   const own = tokens.filter(t => t.color === token.color);
   const winner = (
     state.rules.quickMode
-      ? own.some(t => t.position === 58)
-      : own.every(t => t.position === 58)
+      ? own.some(t => t.position === FINISH)
+      : own.every(t => t.position === FINISH)
   )
     ? token.color
     : null;
 
-  const reachedHome = token.position === 58;
+  const reachedHome = token.position === FINISH;
   const extraTurn = dice === 6 || captured.length > 0 || reachedHome;
 
   return {

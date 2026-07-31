@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createInitialState, getLegalMoves } from './engine';
+import { createInitialState, getLegalMoves, FINISH } from './engine';
 import { ruleBasedBot } from './bot';
 import type { GameState } from './types';
 
@@ -31,7 +31,7 @@ describe('ruleBasedBot', () => {
 
   it('prefers finishing a token over a safe square', async () => {
     const state = createInitialState();
-    setPos(state, 'red-0', 54); // with a 4, lands exactly on 58 (home)
+    setPos(state, 'red-0', FINISH - 4); // with a 4, lands exactly on the centre
     setPos(state, 'red-1', 5); // with a 4, lands on safe global 8
 
     const legal = getLegalMoves(state, 4);

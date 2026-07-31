@@ -11,7 +11,11 @@ import {
   getLeadingToken,
   SAFE_SQUARES,
   START_OFFSET,
+  FINISH,
+  TRACK_END,
+  HOME_COLUMN_LENGTH,
 } from './engine';
+import { getTokenCell } from './board';
 import type { GameState, HouseRules } from './types';
 
 /** Mutates a token's position in place — test setup convenience. */
@@ -95,9 +99,9 @@ describe('blocks', () => {
 });
 
 describe('exact count to finish', () => {
-  it('a token must land exactly on 58', () => {
+  it('a token must land exactly on the centre', () => {
     const state = createInitialState();
-    setPos(state, 'red-0', 56);
+    setPos(state, 'red-0', FINISH - 2);
 
     expect(getLegalMoves(state, 2).map(t => t.id)).toContain('red-0');
     expect(getLegalMoves(state, 3).map(t => t.id)).not.toContain('red-0');
@@ -105,16 +109,45 @@ describe('exact count to finish', () => {
 
   it('reaching home grants an extra turn and completes a win', () => {
     const state = createInitialState();
-    setPos(state, 'red-0', 56);
-    setPos(state, 'red-1', 58);
-    setPos(state, 'red-2', 58);
-    setPos(state, 'red-3', 58);
+    setPos(state, 'red-0', FINISH - 2);
+    setPos(state, 'red-1', FINISH);
+    setPos(state, 'red-2', FINISH);
+    setPos(state, 'red-3', FINISH);
 
     const result = applyMove(state, 'red-0', 2);
 
-    expect(result.tokens.find(t => t.id === 'red-0')!.position).toBe(58);
+    expect(result.tokens.find(t => t.id === 'red-0')!.position).toBe(FINISH);
     expect(result.currentPlayer).toBe('red'); // extra turn for reaching home
     expect(result.winner).toBe('red');
+  });
+
+  // The home column is 5 cells (52-56) and the last one steps straight into
+  // the centre — there is no extra square in between.
+  it('the home column is 5 cells and step 6 lands in the centre', () => {
+    expect(FINISH - TRACK_END).toBe(HOME_COLUMN_LENGTH + 1);
+    expect(HOME_COLUMN_LENGTH).toBe(5);
+
+    // From the last track square a single 6 covers all 5 home cells + centre.
+    const state = createInitialState();
+    setPos(state, 'red-0', TRACK_END);
+    expect(getLegalMoves(state, 6).map(t => t.id)).toContain('red-0');
+    expect(applyMove(state, 'red-0', 6).tokens.find(t => t.id === 'red-0')!.position).toBe(FINISH);
+
+    // And the final home cell needs exactly 1.
+    const last = createInitialState();
+    setPos(last, 'red-0', FINISH - 1);
+    expect(getLegalMoves(last, 1).map(t => t.id)).toContain('red-0');
+    expect(getLegalMoves(last, 2).map(t => t.id)).not.toContain('red-0');
+  });
+
+  it('every home-column position maps to its own board cell', () => {
+    // 52..56 are the coloured cells; FINISH renders in the centre slots.
+    const cells = new Set<string>();
+    for (let p = TRACK_END + 1; p < FINISH; p++) {
+      const { row, col } = getTokenCell({ id: 'red-0', color: 'red', position: p });
+      cells.add(`${row},${col}`);
+    }
+    expect(cells.size).toBe(HOME_COLUMN_LENGTH);
   });
 });
 
@@ -183,6 +216,75 @@ describe('rule conformance', () => {
     expect(getLegalMoves(state, 6).map(t => t.id)).toContain('red-0');
   });
 
+  // Reported from real play: a third token of the same colour could not get
+  // past its own pair. Checked for every colour, since only red has a zero
+  // start offset and a bug in the relative->global conversion would hide there.
+  it('a third token passes its own blockade, for every colour', () => {
+    for (const color of ['red', 'green', 'yellow', 'blue'] as const) {
+      const state = createInitialState();
+      state.currentPlayer = color;
+      setPos(state, `${color}-0`, 4);
+      setPos(state, `${color}-1`, 8); // pair sits mid-path
+      setPos(state, `${color}-2`, 8);
+
+      const legal = getLegalMoves(state, 6).map(t => t.id);
+      expect(legal, `${color} should pass its own blockade`).toContain(`${color}-0`);
+    }
+  });
+
+  it('a third token may also land on its own pair', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 4);
+    setPos(state, 'red-1', 8);
+    setPos(state, 'red-2', 8);
+
+    expect(getLegalMoves(state, 4).map(t => t.id)).toContain('red-0');
+  });
+
+  it('an opponent blockade still blocks passage for every colour', () => {
+    for (const color of ['red', 'green', 'yellow', 'blue'] as const) {
+      const enemy = color === 'green' ? 'red' : 'green';
+      const state = createInitialState();
+      state.currentPlayer = color;
+      setPos(state, `${color}-0`, 4);
+      // Put the enemy pair on the global square that `color` reaches at rel 8.
+      const global = (START_OFFSET[color] + 8 - 1) % 52;
+      const enemyRel = ((global - START_OFFSET[enemy] + 52) % 52) + 1;
+      setPos(state, `${enemy}-0`, enemyRel);
+      setPos(state, `${enemy}-1`, enemyRel);
+
+      const legal = getLegalMoves(state, 6).map(t => t.id);
+      expect(legal, `${color} must be blocked by ${enemy}`).not.toContain(`${color}-0`);
+    }
+  });
+
+  // House deviation: two tokens pile up on their own start square after a
+  // couple of sixes, and letting that wall off the board makes for a bad game.
+  it('a blockade on its own start square does not block opponents', () => {
+    const state = createInitialState();
+    state.currentPlayer = 'red';
+    setPos(state, 'red-0', 10);
+    // green's pair sits on green's own start square (global 13).
+    setPos(state, 'green-0', 1);
+    setPos(state, 'green-1', 1);
+    expect(START_OFFSET.green).toBe(13);
+
+    // red rel 14 == global 13, so a 4 passes straight over the pair.
+    expect(getLegalMoves(state, 4).map(t => t.id)).toContain('red-0');
+    expect(getLegalMoves(state, 6).map(t => t.id)).toContain('red-0');
+  });
+
+  it('the same blockade one square later does block', () => {
+    const state = createInitialState();
+    state.currentPlayer = 'red';
+    setPos(state, 'red-0', 10);
+    // one square past green's start: global 14, not a start square
+    setPos(state, 'green-0', 2);
+    setPos(state, 'green-1', 2);
+
+    expect(getLegalMoves(state, 5).map(t => t.id)).not.toContain('red-0');
+  });
+
   it('every coloured start square is a safe square', () => {
     for (const offset of Object.values(START_OFFSET)) {
       expect(SAFE_SQUARES).toContain(offset);
@@ -201,7 +303,7 @@ describe('rule conformance', () => {
 
   it('overshooting home makes that token illegal but leaves others playable', () => {
     const state = createInitialState();
-    setPos(state, 'red-0', 57); // needs exactly 1
+    setPos(state, 'red-0', FINISH - 1); // needs exactly 1
     setPos(state, 'red-1', 20);
 
     const legal = getLegalMoves(state, 3).map(t => t.id);
@@ -213,7 +315,7 @@ describe('rule conformance', () => {
     const state = createInitialState();
     setPos(state, 'red-0', 12);
     setPos(state, 'red-1', 40);
-    setPos(state, 'red-2', 58); // finished — never the "leader"
+    setPos(state, 'red-2', FINISH); // finished — never the "leader"
     expect(getLeadingToken(state.tokens, 'red')!.id).toBe('red-1');
 
     setPos(state, 'red-0', -1);
@@ -257,14 +359,17 @@ describe('distinct move outcomes', () => {
 
   it('separates stacked tokens once one of them can finish and the other cannot', () => {
     const state = createInitialState();
-    setPos(state, 'red-0', 55);
-    setPos(state, 'red-1', 55);
+    const stacked = FINISH - 3;
+    setPos(state, 'red-0', stacked);
+    setPos(state, 'red-1', stacked);
     setPos(state, 'red-2', 20);
 
-    // Both stacked tokens go to 58; red-2 goes to 23. Two outcomes, not three.
+    // Both stacked tokens reach the centre; red-2 goes to 23. Two outcomes.
     const outcomes = getDistinctMoveOutcomes(state, 3);
     expect(outcomes).toHaveLength(2);
-    expect(new Set(outcomes.map(t => (t.position === 55 ? 58 : 23)))).toEqual(new Set([58, 23]));
+    expect(new Set(outcomes.map(t => (t.position === stacked ? FINISH : 23)))).toEqual(
+      new Set([FINISH, 23]),
+    );
   });
 
   it('treats stacked tokens as one outcome even when the move captures', () => {
@@ -304,14 +409,14 @@ describe('house rules', () => {
 
   it('quick mode: the first token home wins', () => {
     const state = withRules({ quickMode: true });
-    setPos(state, 'red-0', 56);
+    setPos(state, 'red-0', FINISH - 2);
     const result = applyMove(state, 'red-0', 2);
     expect(result.winner).toBe('red');
   });
 
   it('without quick mode the same move does not win', () => {
     const state = withRules({});
-    setPos(state, 'red-0', 56);
+    setPos(state, 'red-0', FINISH - 2);
     expect(applyMove(state, 'red-0', 2).winner).toBeNull();
   });
 
@@ -379,12 +484,12 @@ describe('extra-turn chains keep re-evaluating legal moves', () => {
   // just the first.
   it('reports exactly one legal move on every roll of a 3-deep chain', () => {
     let state = createInitialState();
-    setPos(state, 'red-0', 52);
-    setPos(state, 'red-1', 53);
-    setPos(state, 'red-2', 54);
-    setPos(state, 'red-3', 58);
+    setPos(state, 'red-0', FINISH - 6);
+    setPos(state, 'red-1', FINISH - 5);
+    setPos(state, 'red-2', FINISH - 4);
+    setPos(state, 'red-3', FINISH);
 
-    // Roll 1 of the chain: only red-0 can land exactly on 58.
+    // Roll 1 of the chain: only red-0 can land exactly on the centre.
     state = registerDiceRoll(state, 6);
     expect(state.diceValue).toBe(6);
     let legal = getLegalMoves(state, 6);

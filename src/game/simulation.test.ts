@@ -6,6 +6,7 @@ import {
   getLegalMoves,
   applyMove,
   passTurn,
+  FINISH,
 } from './engine';
 import { ruleBasedBot } from './bot';
 import type { GameState, HouseRules } from './types';
@@ -15,7 +16,7 @@ function assertValid(state: GameState, turn: number) {
     throw new Error(`turn ${turn}: expected 16 tokens, got ${state.tokens.length}`);
   }
   for (const t of state.tokens) {
-    const ok = t.position === -1 || (t.position >= 1 && t.position <= 58);
+    const ok = t.position === -1 || (t.position >= 1 && t.position <= FINISH);
     if (!ok) throw new Error(`turn ${turn}: token ${t.id} at invalid position ${t.position}`);
   }
   if (!state.players.includes(state.currentPlayer)) {
@@ -65,7 +66,7 @@ describe('full-game bot simulation', () => {
       const state = await playGame();
       expect(state.winner).not.toBeNull();
       expect(
-        state.tokens.filter(t => t.color === state.winner).every(t => t.position === 58),
+        state.tokens.filter(t => t.color === state.winner).every(t => t.position === FINISH),
       ).toBe(true);
     }
   }, 30000);
@@ -80,7 +81,7 @@ describe('full-game bot simulation', () => {
       for (let game = 0; game < 3; game++) {
         const state = await playGame(rules);
         expect(state.winner).not.toBeNull();
-        const home = state.tokens.filter(t => t.color === state.winner && t.position === 58);
+        const home = state.tokens.filter(t => t.color === state.winner && t.position === FINISH);
         expect(home.length).toBeGreaterThanOrEqual(rules.quickMode ? 1 : 4);
       }
     }
