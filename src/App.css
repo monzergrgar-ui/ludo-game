@@ -684,6 +684,12 @@ body {
   transform: scale(1.12);
 }
 
+.setup-note {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+}
+
 .advanced-toggle {
   border: none;
   background: none;

@@ -4,6 +4,7 @@ import {
   createInitialState,
   registerDiceRoll,
   getLegalMoves,
+  getDistinctMoveOutcomes,
   getMovePath,
   applyMove,
   passTurn,
@@ -327,7 +328,6 @@ function SetupScreen({ onStart }: SetupScreenProps) {
   const [mode, setMode] = useState<GameMode | null>(null);
   // Play vs Computer
   const [myColor, setMyColor] = useState<PlayerColor>('red');
-  const [oppCount, setOppCount] = useState(1);
   // Pass & Play
   const [count, setCount] = useState(4);
   const [advanced, setAdvanced] = useState(false);
@@ -342,17 +342,10 @@ function SetupScreen({ onStart }: SetupScreenProps) {
     });
   };
 
+  // Always 1 human vs 1 bot, seated on opposite corners.
   const startVsComputer = () => {
-    // Opposite corner first for good board spread, then the rest.
-    const preference = [
-      OPPOSITE[myColor],
-      ...SEAT_ORDER.filter(c => c !== myColor && c !== OPPOSITE[myColor]),
-    ];
-    const opponents = preference.slice(0, oppCount);
-    const seats = SEAT_ORDER.filter(c => c === myColor || opponents.includes(c));
-    // Rotate so the human rolls first (cyclic order is preserved).
-    const me = seats.indexOf(myColor);
-    onStart([...seats.slice(me), ...seats.slice(0, me)], new Set(opponents));
+    const opponent = OPPOSITE[myColor];
+    onStart([myColor, opponent], new Set([opponent]));
   };
 
   const passPlayers = SEATS_FOR_COUNT[count];
@@ -365,7 +358,7 @@ function SetupScreen({ onStart }: SetupScreenProps) {
           <button className="mode-btn" onClick={() => setMode('vsComputer')}>
             <span className="mode-icon">🤖</span>
             <span className="mode-title">Play vs Computer</span>
-            <span className="mode-sub">You against 1–3 bot opponents</span>
+            <span className="mode-sub">One-on-one against a bot</span>
           </button>
           <button className="mode-btn" onClick={() => setMode('passPlay')}>
             <span className="mode-icon">👥</span>
@@ -395,20 +388,10 @@ function SetupScreen({ onStart }: SetupScreenProps) {
             ))}
           </div>
         </div>
-        <div className="setup-group">
-          <p className="setup-label">Opponents</p>
-          <div className="setup-counts">
-            {[1, 2, 3].map(n => (
-              <button
-                key={n}
-                className={`count-btn ${oppCount === n ? 'selected' : ''}`}
-                onClick={() => setOppCount(n)}
-              >
-                {n} bot{n > 1 ? 's' : ''}
-              </button>
-            ))}
-          </div>
-        </div>
+        <p className="setup-note">
+          You play <b>{myColor.toUpperCase()}</b> against one bot as{' '}
+          <b>{OPPOSITE[myColor].toUpperCase()}</b>.
+        </p>
         <button className="start-btn" onClick={startVsComputer}>
           Start Game
         </button>
@@ -852,8 +835,11 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, busy]);
 
-  // Auto-move when exactly one legal move exists, re-evaluated fresh after
-  // EVERY roll (keyed on rollSeq), however deep an extra-turn chain runs.
+  // Auto-move when the legal moves collapse to a single distinct OUTCOME —
+  // not merely a single legal token. Two pawns stacked on one square offer
+  // two "choices" that land identically, which is no choice at all.
+  // Re-evaluated fresh after EVERY roll (keyed on rollSeq), however deep an
+  // extra-turn chain runs.
   //
   // Deliberately no cleanup/clearTimeout: the previous version cancelled its
   // pending auto-move on any re-render, and the decorative timers left over
@@ -865,17 +851,17 @@ function App() {
     if (!autoMoveSingles || currentIsBot || busy) return;
     if (state.winner || state.diceValue === null) return;
     if (autoScheduledRef.current === rollSeq) return;
-    const legal = getLegalMoves(state, state.diceValue);
-    if (legal.length !== 1) return;
+    const outcomes = getDistinctMoveOutcomes(state, state.diceValue);
+    if (outcomes.length !== 1) return;
 
     autoScheduledRef.current = rollSeq;
-    const tokenId = legal[0].id;
+    const tokenId = outcomes[0].id;
     // Brief delay so the highlight is visible before the token sets off.
     setTimeout(() => {
       const s = stateRef.current;
       if (animRef.current || s.winner || s.diceValue === null) return;
-      const nowLegal = getLegalMoves(s, s.diceValue);
-      if (nowLegal.length === 1 && nowLegal[0].id === tokenId) moveToken(tokenId);
+      const stillOne = getDistinctMoveOutcomes(s, s.diceValue);
+      if (stillOne.length === 1 && stillOne[0].id === tokenId) moveToken(tokenId);
     }, timings.autoMove);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rollSeq, state, busy, currentIsBot, autoMoveSingles, timings.autoMove]);

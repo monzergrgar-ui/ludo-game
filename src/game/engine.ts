@@ -101,21 +101,47 @@ function destinationOf(token: Token, dice: number): number {
   return token.position === -1 ? 1 : token.position + dice;
 }
 
-/** Legal moves that would capture at least one opponent token. */
-export function getCapturingMoves(state: GameState, dice: number): Token[] {
-  return getLegalMoves(state, dice).filter(token => {
-    const dest = destinationOf(token, dice);
-    if (dest < 1 || dest > 51) return false;
-    const global = getGlobalPosition(token.color, dest);
-    if (global === null || SAFE_SQUARES.includes(global)) return false;
-    return state.tokens.some(
+/** Opponent tokens that a move landing on `destination` would send home. */
+function getCapturedIds(tokens: Token[], color: PlayerColor, destination: number): string[] {
+  if (destination < 1 || destination > 51) return [];
+  const global = getGlobalPosition(color, destination);
+  if (global === null || SAFE_SQUARES.includes(global)) return [];
+  return tokens
+    .filter(
       other =>
-        other.color !== token.color &&
+        other.color !== color &&
         other.position >= 1 &&
         other.position <= 51 &&
         getGlobalPosition(other.color, other.position) === global,
-    );
-  });
+    )
+    .map(other => other.id);
+}
+
+/** Legal moves that would capture at least one opponent token. */
+export function getCapturingMoves(state: GameState, dice: number): Token[] {
+  return getLegalMoves(state, dice).filter(
+    token => getCapturedIds(state.tokens, token.color, destinationOf(token, dice)).length > 0,
+  );
+}
+
+/**
+ * Legal moves reduced to one representative per *distinct outcome*.
+ *
+ * Two tokens of the same colour sitting on the same square produce identical
+ * results — same destination, same captures, same home entry — so offering
+ * both as a choice is meaningless. Callers should ask the player to choose
+ * only when this returns more than one move.
+ */
+export function getDistinctMoveOutcomes(state: GameState, dice: number): Token[] {
+  const byOutcome = new Map<string, Token>();
+  for (const token of getLegalMoves(state, dice)) {
+    const destination = destinationOf(token, dice);
+    const captured = getCapturedIds(state.tokens, token.color, destination).sort().join(',');
+    // Destination covers home entry (58) and the home stretch implicitly.
+    const key = `${destination}|${captured}`;
+    if (!byOutcome.has(key)) byOutcome.set(key, token);
+  }
+  return [...byOutcome.values()];
 }
 
 /**
@@ -193,21 +219,9 @@ export function applyMove(state: GameState, tokenId: string, dice: number): Game
 
   token.position = token.position === -1 ? 1 : token.position + dice;
 
-  const captured: string[] = [];
-  if (token.position >= 1 && token.position <= 51) {
-    const globalPos = getGlobalPosition(token.color, token.position);
-    if (!SAFE_SQUARES.includes(globalPos!)) {
-      for (const other of tokens) {
-        if (
-          other.color !== token.color &&
-          other.position >= 1 && other.position <= 51 &&
-          getGlobalPosition(other.color, other.position) === globalPos
-        ) {
-          other.position = -1; // captured, back to base
-          captured.push(other.id);
-        }
-      }
-    }
+  const captured = getCapturedIds(tokens, token.color, token.position);
+  for (const id of captured) {
+    tokens.find(t => t.id === id)!.position = -1; // back to base
   }
 
   // Mandatory capture: a capture was on offer but this move didn't take it.

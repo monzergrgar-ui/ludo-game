@@ -7,6 +7,7 @@ import {
   registerDiceRoll,
   passTurn,
   getCapturingMoves,
+  getDistinctMoveOutcomes,
   getLeadingToken,
   SAFE_SQUARES,
   START_OFFSET,
@@ -219,6 +220,68 @@ describe('rule conformance', () => {
     setPos(state, 'red-1', -1);
     setPos(state, 'red-3', -1);
     expect(getLeadingToken(state.tokens, 'red')).toBeNull();
+  });
+});
+
+describe('distinct move outcomes', () => {
+  // Guards the "pointless choice" bug: identical tokens on one square are two
+  // legal moves but only one outcome, so the player should never be asked.
+  it('collapses two stacked tokens into a single outcome (the 6/6/3 case)', () => {
+    let state = createInitialState();
+
+    // Roll 6: bring red-0 out. Roll 6 again: bring red-1 out. Both now sit on
+    // red's start square, position 1.
+    state = registerDiceRoll(state, 6);
+    state = applyMove(state, 'red-0', 6);
+    expect(state.currentPlayer).toBe('red'); // extra turn from the 6
+    state = registerDiceRoll(state, 6);
+    state = applyMove(state, 'red-1', 6);
+
+    const stacked = state.tokens.filter(t => t.id === 'red-0' || t.id === 'red-1');
+    expect(stacked.map(t => t.position)).toEqual([1, 1]);
+
+    // Roll 3: two legal moves, but they are indistinguishable.
+    state = registerDiceRoll(state, 3);
+    expect(getLegalMoves(state, 3).map(t => t.id).sort()).toEqual(['red-0', 'red-1']);
+    expect(getDistinctMoveOutcomes(state, 3)).toHaveLength(1);
+  });
+
+  it('keeps genuinely different destinations separate', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 1);
+    setPos(state, 'red-1', 7); // different square -> different destination
+
+    expect(getLegalMoves(state, 3)).toHaveLength(2);
+    expect(getDistinctMoveOutcomes(state, 3)).toHaveLength(2);
+  });
+
+  it('separates stacked tokens once one of them can finish and the other cannot', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 55);
+    setPos(state, 'red-1', 55);
+    setPos(state, 'red-2', 20);
+
+    // Both stacked tokens go to 58; red-2 goes to 23. Two outcomes, not three.
+    const outcomes = getDistinctMoveOutcomes(state, 3);
+    expect(outcomes).toHaveLength(2);
+    expect(new Set(outcomes.map(t => (t.position === 55 ? 58 : 23)))).toEqual(new Set([58, 23]));
+  });
+
+  it('treats stacked tokens as one outcome even when the move captures', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 1);
+    setPos(state, 'red-1', 1);
+    setPos(state, 'green-0', 44); // global 4 — captured by either token with a 4
+
+    expect(getLegalMoves(state, 4)).toHaveLength(2);
+    expect(getDistinctMoveOutcomes(state, 4)).toHaveLength(1);
+    expect(getCapturingMoves(state, 4)).toHaveLength(2);
+  });
+
+  it('all four tokens in base with a 6 is a single outcome', () => {
+    const state = createInitialState();
+    expect(getLegalMoves(state, 6)).toHaveLength(4);
+    expect(getDistinctMoveOutcomes(state, 6)).toHaveLength(1);
   });
 });
 
