@@ -798,18 +798,23 @@ function App() {
       void handleRoll();
       return;
     }
-    // Buffer any tap that lands while the board is busy, not just one in the
-    // final step of a move — a tap two cells from the end is just as
-    // deliberate, and dropping it is what made the die feel unresponsive.
-    // Staleness is judged when it fires, not here.
-    if (busy && !state.winner && !currentIsBot) {
+    // Anything we can't act on right now is buffered rather than dropped. The
+    // panel glows the moment the turn changes, but the die only truly accepts
+    // input once the previous move's state has settled — a fast tap lands in
+    // that gap. Buffer unconditionally (bar a finished game) and let the
+    // effect below decide when it is safe to fire; staleness is judged there.
+    if (!state.winner) {
       pendingRollAt.current = Date.now();
     }
   };
 
+  // Fires a buffered tap as soon as the die genuinely accepts input. Depends on
+  // the whole state object so it re-checks after every transition, not just the
+  // one that happened to be in flight when the tap arrived.
   useEffect(() => {
     if (pendingRollAt.current === null) return;
-    if (busy || state.winner || currentIsBot || state.diceValue !== null) return;
+    if (busy || rollingRef.current || state.winner || currentIsBot) return;
+    if (state.diceValue !== null) return;
     // Generous enough to cover a full move animation, short enough that a tap
     // from a previous turn can never roll for you.
     const fresh = Date.now() - pendingRollAt.current < 2500;

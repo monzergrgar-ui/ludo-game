@@ -15,7 +15,7 @@ import {
   TRACK_END,
   HOME_COLUMN_LENGTH,
 } from './engine';
-import { getTokenCell } from './board';
+import { getTokenCell, HOME_STRETCH } from './board';
 import type { GameState, HouseRules } from './types';
 
 /** Mutates a token's position in place — test setup convenience. */
@@ -138,6 +138,35 @@ describe('exact count to finish', () => {
     setPos(last, 'red-0', FINISH - 1);
     expect(getLegalMoves(last, 1).map(t => t.id)).toContain('red-0');
     expect(getLegalMoves(last, 2).map(t => t.id)).not.toContain('red-0');
+  });
+
+  // The centre goal occupies the 3x3 block from (6,6) to (9,9). Every colour's
+  // column must approach it identically — no cell may sit inside the block, and
+  // the last cell of each colour must be the same distance from the middle.
+  it('all four home columns are symmetric and clear of the centre block', () => {
+    const BOARD_MID = 7.5;
+    const distances: number[] = [];
+
+    for (const color of ['red', 'green', 'yellow', 'blue'] as const) {
+      const cells = HOME_STRETCH[color];
+      expect(cells, `${color} column length`).toHaveLength(HOME_COLUMN_LENGTH);
+
+      cells.forEach(([row, col], i) => {
+        // A cell spans [col, col+1] x [row, row+1]; none may fall inside 6..9.
+        const insideCentre = col >= 6 && col + 1 <= 9 && row >= 6 && row + 1 <= 9;
+        expect(insideCentre, `${color} cell ${i} at (${row},${col}) overlaps the centre`).toBe(
+          false,
+        );
+      });
+
+      const [lastRow, lastCol] = cells[cells.length - 1];
+      distances.push(
+        Math.abs(lastRow + 0.5 - BOARD_MID) + Math.abs(lastCol + 0.5 - BOARD_MID),
+      );
+    }
+
+    // Identical for every colour — a per-colour mapping slip would show here.
+    expect(new Set(distances).size, `distances were ${distances.join(', ')}`).toBe(1);
   });
 
   it('every home-column position maps to its own board cell', () => {
