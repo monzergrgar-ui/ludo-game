@@ -41,6 +41,21 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
+        // Voice clips are deliberately left out of the precache — they are
+        // large and the set grows as variants are added. They are cached the
+        // first time each one plays, so they work offline from then on.
+        runtimeCaching: [
+          {
+            urlPattern: /\/sounds\/commentary\/.*\.(?:m4a|mp3|ogg|wav)$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'commentary-voice',
+              expiration: { maxEntries: 60, maxAgeSeconds: 60 * 60 * 24 * 90 },
+              cacheableResponse: { statuses: [0, 200] },
+              rangeRequests: true,
+            },
+          },
+        ],
       },
     }),
   ],

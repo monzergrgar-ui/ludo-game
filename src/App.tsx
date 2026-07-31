@@ -19,6 +19,7 @@ import {
 } from './game/fairness';
 import { ruleBasedBot } from './game/bot';
 import { playSound, soundSettings, vibrate } from './game/sound';
+import { stopVoice } from './game/voice';
 import { emitCommentary, isUnderThreat, isTrailing } from './game/commentary';
 import { COLORS, getTokenCell } from './game/board';
 import { DEFAULT_RULES } from './game/engine';
@@ -230,6 +231,8 @@ interface SettingsPanelProps {
   onSpeedChange: (s: GameSpeed) => void;
   muted: boolean;
   onMutedChange: (m: boolean) => void;
+  voiceMuted: boolean;
+  onVoiceMutedChange: (m: boolean) => void;
   autoMoveSingles: boolean;
   onAutoMoveChange: (v: boolean) => void;
   rules: HouseRules;
@@ -260,6 +263,8 @@ function SettingsPanel({
   onSpeedChange,
   muted,
   onMutedChange,
+  voiceMuted,
+  onVoiceMutedChange,
   autoMoveSingles,
   onAutoMoveChange,
   rules,
@@ -294,6 +299,17 @@ function SettingsPanel({
               onChange={e => onMutedChange(!e.target.checked)}
             />
             <span>Sound effects</span>
+          </label>
+          <label className="settings-row">
+            <input
+              type="checkbox"
+              checked={!voiceMuted}
+              onChange={e => onVoiceMutedChange(!e.target.checked)}
+            />
+            <span>
+              Commentary voice
+              <small>Recorded Arabic call-outs for captures and tokens reaching home.</small>
+            </span>
           </label>
           <label className="settings-row">
             <input
@@ -583,6 +599,7 @@ function App() {
   const [banner, setBanner] = useState<string | null>(null);
   const [shaking, setShaking] = useState(false);
   const [muted, setMuted] = useState(soundSettings.muted);
+  const [voiceMuted, setVoiceMuted] = useState(soundSettings.voiceMuted);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [speed, setSpeed] = useState<GameSpeed>('normal');
   const [rules, setRules] = useState<HouseRules>(DEFAULT_RULES);
@@ -635,6 +652,13 @@ function App() {
   const applyMuted = (m: boolean) => {
     soundSettings.muted = m;
     setMuted(m);
+    if (m) stopVoice();
+  };
+
+  const applyVoiceMuted = (m: boolean) => {
+    soundSettings.voiceMuted = m;
+    setVoiceMuted(m);
+    if (m) stopVoice();
   };
 
   // House rules live on the game state so the engine can consult them; keep
@@ -1019,6 +1043,8 @@ function App() {
           onSpeedChange={setSpeed}
           muted={muted}
           onMutedChange={applyMuted}
+          voiceMuted={voiceMuted}
+          onVoiceMutedChange={applyVoiceMuted}
           autoMoveSingles={autoMoveSingles}
           onAutoMoveChange={setAutoMoveSingles}
           rules={rules}

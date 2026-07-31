@@ -6,9 +6,21 @@
 
 export interface SoundSettings {
   muted: boolean;
+  /** Commentary voice clips, muted independently of the effects. */
+  voiceMuted: boolean;
 }
 
-export const soundSettings: SoundSettings = { muted: false };
+export const soundSettings: SoundSettings = { muted: false, voiceMuted: false };
+
+/**
+ * Multiplier applied to every effect's gain. The voice layer pulls this down
+ * while a clip is speaking so the ticks and thuds don't talk over it.
+ */
+let duck = 1;
+
+export function setSfxDuck(level: number) {
+  duck = Math.max(0, Math.min(1, level));
+}
 
 export type SoundName = 'dice' | 'step' | 'capture' | 'home' | 'win' | 'turn' | 'unlucky';
 
@@ -59,7 +71,7 @@ function tone(ac: AudioContext, freq: number, opts: ToneOpts = {}) {
   osc.type = type;
   osc.frequency.setValueAtTime(freq, start);
   if (glideTo !== undefined) osc.frequency.exponentialRampToValueAtTime(glideTo, start + dur);
-  g.gain.setValueAtTime(gain, start);
+  g.gain.setValueAtTime(Math.max(0.0001, gain * duck), start);
   g.gain.exponentialRampToValueAtTime(0.001, start + dur);
   osc.connect(g).connect(ac.destination);
   osc.start(start);
@@ -80,7 +92,7 @@ function noiseBurst(
   filter.type = 'bandpass';
   filter.frequency.value = filterFreq;
   const g = ac.createGain();
-  g.gain.setValueAtTime(gain, start);
+  g.gain.setValueAtTime(Math.max(0.0001, gain * duck), start);
   g.gain.exponentialRampToValueAtTime(0.001, start + dur);
   src.connect(filter).connect(g).connect(ac.destination);
   src.start(start);

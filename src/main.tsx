@@ -4,6 +4,10 @@ import './index.css'
 import App from './App.tsx'
 import InstallPrompt from './components/InstallPrompt.tsx'
 import UpdatePrompt from './components/UpdatePrompt.tsx'
+import { initVoice } from './game/voice.ts'
+
+// Recorded commentary listens on the same events the text layer used.
+initVoice()
 
 // The service worker is registered by UpdatePrompt's useRegisterSW hook, so
 // the "new version ready" event has somewhere to surface.
