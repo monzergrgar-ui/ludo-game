@@ -33,10 +33,6 @@ const SEATS_FOR_COUNT: Record<number, PlayerColor[]> = {
   4: ['red', 'green', 'yellow', 'blue'],
 };
 
-/** Corner panel rows around the board, matching each color's yard corner. */
-const TOP_ROW: PlayerColor[] = ['red', 'green'];
-const BOTTOM_ROW: PlayerColor[] = ['blue', 'yellow'];
-
 interface AnimState {
   tokenId: string;
   path: number[];
@@ -143,11 +139,17 @@ function Die({ value, rolling, canRoll, inactive, landing, onRoll }: DieProps) {
 
 /* --- corner player panel: avatar + name + that player's die --- */
 
-interface CornerPanelProps {
+/** Which board corner each colour's die sits at, matching its yard. */
+const CORNER_CLASS: Record<PlayerColor, string> = {
+  red: 'cd-tl',
+  green: 'cd-tr',
+  yellow: 'cd-br',
+  blue: 'cd-bl',
+};
+
+interface CornerDieProps {
   color: PlayerColor;
-  isBot: boolean;
   active: boolean;
-  homeCount: number;
   face: number | null;
   rolling: boolean;
   canRoll: boolean;
@@ -155,28 +157,26 @@ interface CornerPanelProps {
   onRoll: () => void;
 }
 
-function CornerPanel({
+/**
+ * A player indicator is just their die, parked at their own corner of the
+ * board: lit and tappable on their turn, dark otherwise. No avatar, name or
+ * counter — they cost vertical space the board wants, and the lit die already
+ * says whose turn it is.
+ */
+function CornerDie({
   color,
-  isBot,
   active,
-  homeCount,
   face,
   rolling,
   canRoll,
   dieLanding,
   onRoll,
-}: CornerPanelProps) {
+}: CornerDieProps) {
   return (
     <div
-      className={`corner-panel ${active ? 'panel-active' : ''}`}
+      className={`corner-die ${CORNER_CLASS[color]} ${active ? 'corner-active' : ''}`}
       style={{ '--panel-color': COLORS[color] } as CSSProperties}
     >
-      {active && <span className="turn-arrow">▼</span>}
-      <span className="avatar">{isBot ? '🤖' : '🙂'}</span>
-      <span className="panel-info">
-        <span className="panel-name">{color.toUpperCase()}</span>
-        <span className="panel-score">🏠 {homeCount}/4</span>
-      </span>
       <Die
         value={face}
         rolling={rolling && active}
@@ -237,6 +237,10 @@ interface SettingsPanelProps {
   onAutoMoveChange: (v: boolean) => void;
   rules: HouseRules;
   onRulesChange: (r: HouseRules) => void;
+  /** Only present mid-game; returns to the setup screen. */
+  onRestart?: () => void;
+  /** The provably-fair panel, kept out of the board's way. */
+  fairness: React.ReactNode;
   onClose: () => void;
 }
 
@@ -269,6 +273,8 @@ function SettingsPanel({
   onAutoMoveChange,
   rules,
   onRulesChange,
+  onRestart,
+  fairness,
   onClose,
 }: SettingsPanelProps) {
   return (
@@ -352,9 +358,24 @@ function SettingsPanel({
           ))}
         </div>
 
-        <button className="start-btn" onClick={onClose}>
-          Done
-        </button>
+        <div className="settings-group">{fairness}</div>
+
+        <div className="settings-actions">
+          {onRestart && (
+            <button
+              className="pass-btn"
+              onClick={() => {
+                onRestart();
+                onClose();
+              }}
+            >
+              ⟲ Restart
+            </button>
+          )}
+          <button className="start-btn" onClick={onClose}>
+            Done
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1020,14 +1041,6 @@ function App() {
     return t;
   });
 
-  const homeCounts = useMemo(() => {
-    const counts = {} as Record<PlayerColor, number>;
-    for (const t of state.tokens) {
-      if (t.position === 58) counts[t.color] = (counts[t.color] ?? 0) + 1;
-    }
-    return counts;
-  }, [state.tokens]);
-
   const settingsUi = (
     <>
       <button
@@ -1049,6 +1062,16 @@ function App() {
           onAutoMoveChange={setAutoMoveSingles}
           rules={rules}
           onRulesChange={applyRules}
+          onRestart={inGame ? restart : undefined}
+          fairness={
+            <FairnessPanel
+              commitment={commitment}
+              lastRoll={lastRoll}
+              lastRollValid={lastRollValid}
+              clientSeed={clientSeed}
+              onClientSeedChange={setClientSeed}
+            />
+          }
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -1068,21 +1091,6 @@ function App() {
   return (
     <div className="app-root">
       {settingsUi}
-      <h1>Ludo</h1>
-
-      <div
-        className="turn-indicator"
-        style={{ '--turn-color': COLORS[state.currentPlayer] } as CSSProperties}
-      >
-        {state.winner ? (
-          <span className="winner-text">{state.winner.toUpperCase()} WINS!</span>
-        ) : (
-          <span>
-            Turn: <b>{state.currentPlayer.toUpperCase()}</b>
-            {currentIsBot && <span className="bot-tag">🤖</span>}
-          </span>
-        )}
-      </div>
 
       {banner && <div className="banner">{banner}</div>}
 
@@ -1120,36 +1128,6 @@ function App() {
       )}
 
       <div className="table">
-        {[TOP_ROW, BOTTOM_ROW].map((rowColors, rowIdx) => (
-          <div className="table-row" key={rowIdx} style={{ order: rowIdx === 0 ? 0 : 2 }}>
-            {rowColors.map(color =>
-              players!.includes(color) ? (
-                <CornerPanel
-                  key={color}
-                  color={color}
-                  isBot={botSeats.has(color)}
-                  active={color === state.currentPlayer && !state.winner}
-                  homeCount={homeCounts[color] ?? 0}
-                  face={faces[color] ?? null}
-                  rolling={rolling}
-                  canRoll={
-                    color === state.currentPlayer &&
-                    !currentIsBot &&
-                    !rolling &&
-                    !state.winner &&
-                    // rollable now, or mid-move-animation (taps near the end
-                    // are buffered by requestRoll and fire right after)
-                    (state.phase === 'rolling' || anim !== null)
-                  }
-                  dieLanding={dieLanding}
-                  onRoll={requestRoll}
-                />
-              ) : (
-                <div key={color} className="corner-spacer" />
-              ),
-            )}
-          </div>
-        ))}
         <div
           className={[
             'board-wrap',
@@ -1158,7 +1136,6 @@ function App() {
             winStage >= 1 ? 'board-zoom' : '',
           ].join(' ')}
           style={{
-            order: 1,
             transformOrigin: state.winner ? ZOOM_ORIGIN[state.winner] : undefined,
           }}
         >
@@ -1176,22 +1153,27 @@ function App() {
             />
           </div>
         </div>
-      </div>
 
-      <div className="controls">
-        {!state.winner && (
-          <button className="restart-link" onClick={restart}>
-            ⟲ Restart
-          </button>
-        )}
-
-        <FairnessPanel
-          commitment={commitment}
-          lastRoll={lastRoll}
-          lastRollValid={lastRollValid}
-          clientSeed={clientSeed}
-          onClientSeedChange={setClientSeed}
-        />
+        {players!.map(color => (
+          <CornerDie
+            key={color}
+            color={color}
+            active={color === state.currentPlayer && !state.winner}
+            face={faces[color] ?? null}
+            rolling={rolling}
+            canRoll={
+              color === state.currentPlayer &&
+              !currentIsBot &&
+              !rolling &&
+              !state.winner &&
+              // rollable now, or mid-move-animation (taps near the end are
+              // buffered by requestRoll and fire right after)
+              (state.phase === 'rolling' || anim !== null)
+            }
+            dieLanding={dieLanding}
+            onRoll={requestRoll}
+          />
+        ))}
       </div>
 
       {winStage >= 2 && <Confetti />}
