@@ -188,6 +188,16 @@ function getNextPlayer(state: GameState): PlayerColor {
 }
 
 /**
+ * Whether a completed move landed a token in the centre. Derived here rather
+ * than compared against a literal at the call site — a stale `=== 58` in the
+ * UI silently disabled the home sound, sparkle and voice clip once FINISH
+ * moved to 57.
+ */
+export function moveReachedHome(action: LastAction): boolean {
+  return action?.type === 'move' && action.to === FINISH;
+}
+
+/**
  * Whether `color` may roll right now. Every player's die is on screen at once,
  * so this must be checked per die: without it a tap on an idle player's die
  * rolls for whoever's turn it actually is.

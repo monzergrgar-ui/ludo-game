@@ -7,6 +7,7 @@ import {
   getDistinctMoveOutcomes,
   getPlayableDice,
   isRollAllowed,
+  moveReachedHome,
   getMovePath,
   applyMove,
   passTurn,
@@ -745,7 +746,7 @@ function App() {
       const result = applyMove(state, movedId, dice);
       const action = result.lastAction;
       const captured = action?.type === 'move' ? action.captured : [];
-      const reachedHome = action?.type === 'move' && action.to === 58;
+      const reachedHome = moveReachedHome(action);
 
       if (captured.length) {
         // Visible arc back to base: offsets from each victim's old cell.
@@ -774,7 +775,7 @@ function App() {
         playSound('home');
         vibrate([20, 30, 25]);
         setHomedId(movedId);
-        setTimeout(() => setHomedId(null), 750);
+        setTimeout(() => setHomedId(null), 1000); // covers the centre burst
         emitCommentary({ type: wasTrailing ? 'comeback' : 'home', player: mover });
       } else if (isUnderThreat(result, movedId) && Math.random() < 0.5) {
         emitCommentary({ type: 'nearMiss', player: mover });

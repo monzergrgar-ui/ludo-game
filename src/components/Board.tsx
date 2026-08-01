@@ -270,6 +270,42 @@ export default function Board({
         );
       })}
 
+      {/* celebration burst from the centre goal in the arriving player's colour */}
+      {homedTokenId &&
+        (() => {
+          const owner = tokens.find(t => t.id === homedTokenId);
+          if (!owner) return null;
+          const shades = [COLORS[owner.color], COLOR_LIGHT[owner.color], '#ffffff'];
+          return (
+            <g className="home-burst" transform="translate(7.5 7.5)" pointerEvents="none">
+              {Array.from({ length: 16 }, (_, i) => {
+                const angle = (i / 16) * Math.PI * 2 + (i % 2 ? 0.2 : 0);
+                const reach = 2.6 + (i % 3) * 0.5;
+                return (
+                  <rect
+                    key={i}
+                    x={-0.075}
+                    y={-0.075}
+                    width={0.15}
+                    height={0.26}
+                    rx={0.05}
+                    fill={shades[i % shades.length]}
+                    className="burst-bit"
+                    style={
+                      {
+                        '--bx': `${Math.cos(angle) * reach}px`,
+                        '--by': `${Math.sin(angle) * reach}px`,
+                        '--spin': `${(i % 2 ? 1 : -1) * 260}deg`,
+                        animationDelay: `${(i % 4) * 0.03}s`,
+                      } as CSSProperties
+                    }
+                  />
+                );
+              })}
+            </g>
+          );
+        })()}
+
       {/* sparkle burst where a token just entered home */}
       {homedTokenId &&
         (() => {

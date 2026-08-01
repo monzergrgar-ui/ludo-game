@@ -10,6 +10,7 @@ import {
   getDistinctMoveOutcomes,
   getPlayableDice,
   isRollAllowed,
+  moveReachedHome,
   getLeadingToken,
   SAFE_SQUARES,
   START_OFFSET,
@@ -520,6 +521,44 @@ describe('house rules', () => {
 
     expect(state.tokens.find(t => t.id === 'red-0')!.position).toBe(30);
     expect(state.currentPlayer).toBe('green');
+  });
+});
+
+describe('home arrival is reported to the UI', () => {
+  // Regression: the UI compared lastAction.to against a hard-coded 58. When
+  // FINISH became 57 that comparison silently went permanently false, killing
+  // the home chime, sparkle and the arrival voice clip.
+  it('flags a move that lands in the centre, whatever FINISH is', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', FINISH - 3);
+    const result = applyMove({ ...state, diceQueue: [3], phase: 'moving' }, 'red-0', 3);
+
+    expect(result.tokens.find(t => t.id === 'red-0')!.position).toBe(FINISH);
+    expect((result.lastAction as { to: number }).to).toBe(FINISH);
+    expect(moveReachedHome(result.lastAction)).toBe(true);
+  });
+
+  it('does not flag an ordinary move, a capture, or a non-move action', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 10);
+    expect(moveReachedHome(applyMove(state, 'red-0', 3).lastAction)).toBe(false);
+
+    const capturing = createInitialState();
+    setPos(capturing, 'red-0', 1);
+    setPos(capturing, 'green-0', 44);
+    expect(moveReachedHome(applyMove(capturing, 'red-0', 4).lastAction)).toBe(false);
+
+    expect(moveReachedHome(null)).toBe(false);
+    expect(moveReachedHome({ type: 'pass', player: 'red' })).toBe(false);
+  });
+
+  it('flags the final token that wins the game too', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', FINISH - 1);
+    for (const id of ['red-1', 'red-2', 'red-3']) setPos(state, id, FINISH);
+    const won = applyMove({ ...state, diceQueue: [1], phase: 'moving' }, 'red-0', 1);
+    expect(won.winner).toBe('red');
+    expect(moveReachedHome(won.lastAction)).toBe(true);
   });
 });
 

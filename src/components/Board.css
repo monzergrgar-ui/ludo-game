@@ -153,6 +153,26 @@
   100% { transform: rotate(360deg) scale(1); }
 }
 
+/* ~1s confetti burst out of the centre goal, purely decorative */
+.home-burst {
+  pointer-events: none;
+}
+
+.burst-bit {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: burst-fly 0.95s cubic-bezier(0.15, 0.7, 0.35, 1) forwards;
+}
+
+@keyframes burst-fly {
+  0% { transform: translate(0, 0) rotate(0deg) scale(0.4); opacity: 0; }
+  15% { opacity: 1; }
+  100% {
+    transform: translate(var(--bx), var(--by)) rotate(var(--spin)) scale(1);
+    opacity: 0;
+  }
+}
+
 /* sparkle burst on home entry */
 .sparkle {
   fill: #ffd75e;
