@@ -249,26 +249,42 @@ body {
  * overlap it, and nothing in here is in normal flow, so the board's size is
  * fixed for the whole game.
  */
+/*
+ * Dice sit in a band above and below the board, as in the reference: large
+ * (about two board cells), tucked close to the edge, and never overlapping.
+ * Taking the space vertically rather than diagonally leaves the board free to
+ * use nearly the full width on a phone.
+ */
 .table {
-  /* The main tap target — deliberately large. */
-  --die-size: clamp(54px, 11vmin, 104px);
-  --die-gap: clamp(7px, 1.8vmin, 18px);
-  --ring: calc(var(--die-size) + var(--die-gap));
-  --chrome: 24px;
+  --die-size: clamp(46px, 13vmin, 112px);
+  --die-gap: calc(var(--die-size) * 0.3);
+  --band: calc(var(--die-size) + var(--die-gap));
+  --chrome: 16px;
   --board: min(
-    calc(100vw - 2 * var(--ring) - 8px),
-    calc(100svh - 2 * var(--ring) - var(--chrome))
+    calc(100vw - 8px),
+    calc(100svh - 2 * var(--band) - var(--chrome))
   );
   position: relative;
-  width: calc(var(--board) + 2 * var(--ring));
-  height: calc(var(--board) + 2 * var(--ring));
+  width: var(--board);
+  height: calc(var(--board) + 2 * var(--band));
   margin: 0 auto;
 }
 
-/* The board occupies the middle; the ring around it belongs to the dice. */
+/* Landscape has far less height to give away, so the dice shrink to keep the
+   board from being squeezed. */
+@media (orientation: landscape) {
+  .table {
+    --die-size: clamp(40px, 9vmin, 88px);
+  }
+}
+
+/* The board sits between the two dice bands. */
 .board-wrap {
   position: absolute;
-  inset: var(--ring);
+  left: 0;
+  right: 0;
+  top: var(--band);
+  height: var(--board);
   transition: transform 0.9s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -318,64 +334,69 @@ body {
   border-radius: calc(var(--die-size) * 0.24);
 }
 
-/* Queued values ride beside the active die, absolutely positioned so they can
-   never push anything around. */
+/* Still-queued values sit beside the die as small pip faces. Absolutely
+   positioned, so they can never affect the board's size. */
 .corner-queue {
   position: absolute;
   top: 50%;
   display: flex;
-  gap: 4px;
+  gap: calc(var(--die-size) * 0.08);
   transform: translateY(-50%);
   pointer-events: none;
 }
 
 .cd-tl .corner-queue,
-.cd-bl .corner-queue { left: calc(100% + 6px); }
+.cd-bl .corner-queue { left: calc(100% + var(--die-size) * 0.14); }
 .cd-tr .corner-queue,
-.cd-br .corner-queue { right: calc(100% + 6px); flex-direction: row-reverse; }
+.cd-br .corner-queue { right: calc(100% + var(--die-size) * 0.14); flex-direction: row-reverse; }
 
 .mini-die {
-  pointer-events: auto;
-  display: grid;
-  place-items: center;
-  width: calc(var(--die-size) * 0.46);
-  height: calc(var(--die-size) * 0.46);
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  border-radius: calc(var(--die-size) * 0.12);
+  display: block;
+  width: calc(var(--die-size) * 0.5);
+  height: calc(var(--die-size) * 0.5);
+  border-radius: calc(var(--die-size) * 0.13);
   background: linear-gradient(150deg, #ffffff, #e4e1d8);
-  color: #141414;
-  font-size: calc(var(--die-size) * 0.26);
-  font-weight: 700;
-  cursor: pointer;
-  touch-action: manipulation;
+  box-shadow: 0 2px 0 #a8a397, 0 3px 6px rgba(0, 0, 0, 0.4);
 }
 
-.mini-spent {
-  opacity: 0.35;
-  filter: grayscale(1);
-  text-decoration: line-through;
-  cursor: default;
-  pointer-events: none;
+.mini-die svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 14%;
+  box-sizing: border-box;
 }
 
-/* Wordless nudge: an arrow bobbing at the die when another roll is waiting. */
+/* Wordless nudge: a gold arrow bobbing at the die from the outer side, so it
+   is always clear of the board. */
 .roll-again {
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 4px);
   width: 0;
   height: 0;
-  border-left: calc(var(--die-size) * 0.17) solid transparent;
-  border-right: calc(var(--die-size) * 0.17) solid transparent;
-  border-top: calc(var(--die-size) * 0.24) solid #ffd75e;
+  border-left: calc(var(--die-size) * 0.2) solid transparent;
+  border-right: calc(var(--die-size) * 0.2) solid transparent;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
   animation: roll-again-bob 0.7s ease-in-out infinite;
   pointer-events: none;
 }
 
+/* Top row: arrow above the die, pointing down at it. */
+.cd-tl .roll-again,
+.cd-tr .roll-again {
+  bottom: calc(100% + var(--die-size) * 0.08);
+  border-top: calc(var(--die-size) * 0.26) solid #ffd75e;
+}
+
+/* Bottom row: arrow below the die, pointing up at it. */
+.cd-bl .roll-again,
+.cd-br .roll-again {
+  top: calc(100% + var(--die-size) * 0.08);
+  border-bottom: calc(var(--die-size) * 0.26) solid #ffd75e;
+}
+
 @keyframes roll-again-bob {
-  0%, 100% { transform: translate(-50%, -4px); opacity: 0.8; }
+  0%, 100% { transform: translate(-50%, -3px); opacity: 0.8; }
   50% { transform: translate(-50%, 3px); opacity: 1; }
 }
 

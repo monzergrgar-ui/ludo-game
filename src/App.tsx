@@ -140,6 +140,19 @@ function Die({ value, rolling, canRoll, inactive, landing, onRoll }: DieProps) {
 
 /* --- corner player panel: avatar + name + that player's die --- */
 
+/** A queued value not yet aimed, drawn as a small pip face. */
+function MiniDie({ value }: { value: number }) {
+  return (
+    <span className="mini-die" aria-label={`${value} queued`}>
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        {PIP_POSITIONS[value].map(([cx, cy], i) => (
+          <circle key={i} cx={cx} cy={cy} r={11} className="pip" />
+        ))}
+      </svg>
+    </span>
+  );
+}
+
 /** Which board corner each colour's die sits at, matching its yard. */
 const CORNER_CLASS: Record<PlayerColor, string> = {
   red: 'cd-tl',
@@ -157,12 +170,9 @@ interface CornerDieProps {
   dieLanding: boolean;
   /** Unspent values beyond the aimed one, shown beside the die. */
   queue: number[];
-  /** Values already spent this turn, shown struck through. */
-  spent: number[];
   /** Another roll is available — show the nudge arrow. */
   extraRoll: boolean;
   onRoll: (color: PlayerColor) => void;
-  onPickDice: (value: number) => void;
 }
 
 /**
@@ -178,10 +188,8 @@ function CornerDie({
   canRoll,
   dieLanding,
   queue,
-  spent,
   extraRoll,
   onRoll,
-  onPickDice,
 }: CornerDieProps) {
   return (
     <div
@@ -197,22 +205,10 @@ function CornerDie({
         landing={dieLanding && active}
         onRoll={() => onRoll(color)}
       />
-      {active && (queue.length > 0 || spent.length > 0) && (
+      {active && queue.length > 0 && (
         <span className="corner-queue">
           {queue.map((v, i) => (
-            <button
-              key={`q${i}`}
-              className="mini-die"
-              onClick={() => onPickDice(v)}
-              aria-label={`Use ${v}`}
-            >
-              {v}
-            </button>
-          ))}
-          {spent.map((v, i) => (
-            <span key={`s${i}`} className="mini-die mini-spent" aria-label={`${v}, spent`}>
-              {v}
-            </span>
+            <MiniDie key={i} value={v} />
           ))}
         </span>
       )}
@@ -883,16 +879,6 @@ function App() {
     }
     return rest;
   })();
-  const spentThisTurn = (() => {
-    const unspent = [...state.diceQueue];
-    const out: number[] = [];
-    for (const v of rolledThisTurn) {
-      const at = unspent.indexOf(v);
-      if (at === -1) out.push(v);
-      else unspent.splice(at, 1);
-    }
-    return out;
-  })();
   const busy = anim !== null || rolling;
   const currentIsBot = inGame && botSeats.has(state.currentPlayer);
   const legalMoveIds = new Set(currentIsBot ? [] : legalMoves.map(t => t.id));
@@ -1213,10 +1199,8 @@ function App() {
             }
             dieLanding={dieLanding}
             queue={queueBeside}
-            spent={spentThisTurn}
             extraRoll={extraRollPending}
             onRoll={requestRoll}
-            onPickDice={setSelectedDice}
           />
         ))}
       </div>
