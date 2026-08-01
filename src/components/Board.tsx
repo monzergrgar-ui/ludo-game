@@ -10,6 +10,7 @@ import {
   YARD_ORIGIN,
   BASE_SLOTS,
   NEUTRAL_SAFE_INDICES,
+  PIP_POSITIONS,
   getTokenCell,
 } from '../game/board';
 import { START_OFFSET } from '../game/engine';
@@ -63,6 +64,10 @@ interface BoardProps {
   flights?: Map<string, { dx: number; dy: number }>;
   /** Human must pick a move: dims non-movable tokens to focus attention. */
   choosing?: boolean;
+  /** Open value picker: which token, and which queued values it can use. */
+  picker?: { tokenId: string; values: number[] } | null;
+  onPickValue?: (value: number) => void;
+  onCancelPicker?: () => void;
   onTokenClick: (id: string) => void;
 }
 
@@ -90,6 +95,9 @@ export default function Board({
   homedTokenId,
   flights,
   choosing,
+  picker,
+  onPickValue,
+  onCancelPicker,
   onTokenClick,
 }: BoardProps) {
   // Group tokens sharing a cell so stacks fan out; draw top rows first so
@@ -330,6 +338,48 @@ export default function Board({
                   />
                 );
               })}
+            </g>
+          );
+        })()}
+
+      {/* per-token value picker: choose WHICH queued value to spend here */}
+      {picker &&
+        (() => {
+          const cell = cellOf.get(picker.tokenId);
+          if (!cell) return null;
+          const n = picker.values.length;
+          const size = 1.5;
+          const gap = 0.18;
+          const width = n * size + (n - 1) * gap;
+          // Keep the strip on the board, and above the token where there's room.
+          const x = Math.min(Math.max(cell.col - width / 2, 0.2), BOARD_SIZE - width - 0.2);
+          const y = cell.row < 4 ? cell.row + 0.9 : cell.row - size - 1.1;
+          return (
+            <g className="value-picker">
+              {/* tap anywhere else to cancel */}
+              <rect
+                x={0}
+                y={0}
+                width={BOARD_SIZE}
+                height={BOARD_SIZE}
+                fill="rgba(4,10,24,0.45)"
+                onClick={() => onCancelPicker?.()}
+              />
+              {picker.values.map((value, i) => (
+                <g
+                  key={value}
+                  className="picker-die"
+                  transform={`translate(${x + i * (size + gap)} ${y})`}
+                  onClick={() => onPickValue?.(value)}
+                >
+                  <rect width={size} height={size} rx={0.3} className="picker-face" />
+                  <g transform={`scale(${size / 100})`}>
+                    {PIP_POSITIONS[value].map(([cx, cy], p) => (
+                      <circle key={p} cx={cx} cy={cy} r={9} className="pip" />
+                    ))}
+                  </g>
+                </g>
+              ))}
             </g>
           );
         })()}

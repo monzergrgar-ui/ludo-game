@@ -9,6 +9,7 @@ import {
   getCapturingMoves,
   getDistinctMoveOutcomes,
   getPlayableDice,
+  getLegalDiceForToken,
   isRollAllowed,
   moveReachedHome,
   getLeadingToken,
@@ -559,6 +560,51 @@ describe('home arrival is reported to the UI', () => {
     const won = applyMove({ ...state, diceQueue: [1], phase: 'moving' }, 'red-0', 1);
     expect(won.winner).toBe('red');
     expect(moveReachedHome(won.lastAction)).toBe(true);
+  });
+});
+
+describe('choosing which queued value to spend on a token', () => {
+  it('offers every distinct queued value the token can legally use', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 10);
+    const queued = { ...state, diceQueue: [6, 6, 4], phase: 'moving' as const };
+
+    // Duplicates collapse: 6 is offered once, not twice.
+    expect(getLegalDiceForToken(queued, 'red-0')).toEqual([6, 4]);
+  });
+
+  it('omits values that would be illegal for that particular token', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', FINISH - 2); // needs exactly 2; 6 overshoots
+    const queued = { ...state, diceQueue: [6, 2], phase: 'moving' as const };
+
+    expect(getLegalDiceForToken(queued, 'red-0')).toEqual([2]);
+  });
+
+  it('a token in base can only use a 6', () => {
+    const state = createInitialState();
+    const queued = { ...state, diceQueue: [6, 3], phase: 'moving' as const };
+    expect(getLegalDiceForToken(queued, 'red-0')).toEqual([6]);
+  });
+
+  it('returns nothing for a token with no legal value at all', () => {
+    const state = createInitialState();
+    const queued = { ...state, diceQueue: [3, 4], phase: 'moving' as const };
+    expect(getLegalDiceForToken(queued, 'red-0')).toEqual([]);
+  });
+
+  it('spending a chosen value leaves the others for other tokens', () => {
+    const state = createInitialState();
+    setPos(state, 'red-0', 1); // a 4 from here captures green-0
+    setPos(state, 'red-1', 20);
+    setPos(state, 'green-0', 44);
+    const queued = { ...state, diceQueue: [6, 6, 4], phase: 'moving' as const };
+
+    // Deliberately spend the 4 on red-0 rather than the next value in order.
+    const after = applyMove(queued, 'red-0', 4);
+    expect(after.diceQueue).toEqual([6, 6]);
+    expect(after.tokens.find(t => t.id === 'green-0')!.position).toBe(-1);
+    expect(getLegalDiceForToken(after, 'red-1')).toEqual([6]);
   });
 });
 

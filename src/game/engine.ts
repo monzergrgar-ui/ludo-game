@@ -206,6 +206,23 @@ export function isRollAllowed(state: GameState, color: PlayerColor): boolean {
   return !state.winner && state.phase === 'rolling' && state.currentPlayer === color;
 }
 
+/**
+ * The distinct queued values that would produce a legal move for one specific
+ * token. Drives the per-token picker: with 6,6,4 queued the player may want the
+ * 4 on this token and the sixes elsewhere, so the choice has to be per token
+ * rather than "next in roll order".
+ */
+export function getLegalDiceForToken(state: GameState, tokenId: string): number[] {
+  const seen = new Set<number>();
+  const usable: number[] = [];
+  for (const value of state.diceQueue) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    if (getLegalMoves(state, value).some(t => t.id === tokenId)) usable.push(value);
+  }
+  return usable;
+}
+
 /** The distinct queued values that currently have at least one legal move. */
 export function getPlayableDice(state: GameState): number[] {
   const seen = new Set<number>();

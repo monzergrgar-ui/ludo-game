@@ -6,6 +6,7 @@ import {
   getLegalMoves,
   getDistinctMoveOutcomes,
   getPlayableDice,
+  getLegalDiceForToken,
   isRollAllowed,
   moveReachedHome,
   getMovePath,
@@ -672,6 +673,8 @@ function App() {
   const [autoMoveSingles, setAutoMoveSingles] = useState(true);
   /** Which queued value the player is spending next (null = first playable). */
   const [selectedDice, setSelectedDice] = useState<number | null>(null);
+  /** Open per-token value picker, when a token could use several values. */
+  const [picker, setPicker] = useState<{ tokenId: string; values: number[] } | null>(null);
   /** Everything rolled this turn, so spent values can still be shown greyed. */
   const [rolledThisTurn, setRolledThisTurn] = useState<number[]>([]);
   /** Another roll is waiting to be taken — drives the nudge arrow. */
@@ -891,7 +894,11 @@ function App() {
   const queueMinis = state.diceQueue.length >= 2 ? state.diceQueue : [];
   const busy = anim !== null || rolling;
   const currentIsBot = inGame && botSeats.has(state.currentPlayer);
-  const legalMoveIds = new Set(currentIsBot ? [] : legalMoves.map(t => t.id));
+  // A token is offered if ANY queued value can move it — not just the aimed
+  // one — since tapping it opens the picker for whichever values it can use.
+  const legalMoveIds = new Set(
+    currentIsBot ? [] : playableDice.flatMap(v => getLegalMoves(state, v)).map(t => t.id),
+  );
 
   const handleRoll = async (color: PlayerColor) => {
     // Ref lock, not render state: two callers in the same tick (a tap plus a
@@ -995,6 +1002,7 @@ function App() {
     if (!token) return;
     const path = getMovePath(token, dice);
     setSelectedDice(null);
+    setPicker(null);
     setAnim({ tokenId, path, step: -1, dice }); // -1 = wind-up first
   };
 
@@ -1009,8 +1017,29 @@ function App() {
   }, [anim]);
 
   const handleTokenClick = (tokenId: string) => {
-    if (busy || currentIsBot || activeDice === null) return;
-    moveToken(tokenId, activeDice);
+    if (busy || currentIsBot) return;
+    // Tapping the same token again cancels an open picker.
+    if (picker?.tokenId === tokenId) {
+      setPicker(null);
+      return;
+    }
+    const usable = getLegalDiceForToken(state, tokenId);
+    if (usable.length === 0) return;
+    // Nothing to choose between: one queued value, or only one that this token
+    // can legally use. Move straight away rather than asking.
+    if (usable.length === 1) {
+      setPicker(null);
+      moveToken(tokenId, usable[0]);
+      return;
+    }
+    setPicker({ tokenId, values: usable });
+  };
+
+  const pickValue = (value: number) => {
+    if (!picker) return;
+    const { tokenId } = picker;
+    setPicker(null);
+    moveToken(tokenId, value);
   };
 
   // No legal moves: hold the rolled face just long enough to read, then move
@@ -1099,6 +1128,7 @@ function App() {
     animRef.current = null;
     setSelectedDice(null);
     setRolledThisTurn([]);
+    setPicker(null);
   };
 
   const startGame = (seats: PlayerColor[], bots: Set<PlayerColor>) => {
@@ -1198,6 +1228,9 @@ function App() {
               homedTokenId={homedId}
               flights={flights}
               choosing={!currentIsBot && !busy && legalMoves.length > 0}
+              picker={picker}
+              onPickValue={pickValue}
+              onCancelPicker={() => setPicker(null)}
               onTokenClick={handleTokenClick}
             />
           </div>

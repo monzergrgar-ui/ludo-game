@@ -4,6 +4,23 @@ import { START_OFFSET, SAFE_SQUARES, FINISH, TRACK_END } from './engine';
 /** 15x15 unit grid, matches a classic Ludo board's cross layout. */
 export const BOARD_SIZE = 15;
 
+/**
+ * Standard die-face pip coordinates on a 100x100 face, shared by the big
+ * corner dice, the queued mini dice and the per-token value picker so they all
+ * read as the same object.
+ */
+const PL = 28;
+const PM = 50;
+const PR = 72;
+export const PIP_POSITIONS: Record<number, [number, number][]> = {
+  1: [[PM, PM]],
+  2: [[PL, PL], [PR, PR]],
+  3: [[PL, PL], [PM, PM], [PR, PR]],
+  4: [[PL, PL], [PR, PL], [PL, PR], [PR, PR]],
+  5: [[PL, PL], [PR, PL], [PM, PM], [PL, PR], [PR, PR]],
+  6: [[PL, PL], [PR, PL], [PL, PM], [PR, PM], [PL, PR], [PR, PR]],
+};
+
 export const COLORS: Record<PlayerColor, string> = {
   red: '#e30613',
   green: '#00a651',

@@ -153,6 +153,31 @@
   100% { transform: rotate(360deg) scale(1); }
 }
 
+/* per-token value picker */
+.value-picker {
+  animation: picker-in 0.18s ease-out;
+}
+
+@keyframes picker-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.picker-die {
+  cursor: pointer;
+}
+
+.picker-face {
+  fill: #fffdf7;
+  stroke: #ffd400;
+  stroke-width: 0.08;
+  filter: drop-shadow(0 0.06px 0.12px rgba(0, 0, 0, 0.6));
+}
+
+.picker-die:hover .picker-face {
+  fill: #fff4c8;
+}
+
 /* ~1s confetti burst out of the centre goal, purely decorative */
 .home-burst {
   pointer-events: none;
