@@ -1221,6 +1221,7 @@ function App() {
           <div className="board-frame">
             <Board
               tokens={renderTokens}
+              currentPlayer={state.currentPlayer}
               legalMoveIds={legalMoveIds}
               movingTokenId={anim?.tokenId ?? null}
               movePhase={anim ? (anim.step === -1 ? 'windup' : 'stepping') : null}

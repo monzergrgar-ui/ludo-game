@@ -52,6 +52,8 @@ const ENTRY_ARROWS: { color: PlayerColor; cell: [number, number]; angle: number 
 
 interface BoardProps {
   tokens: Token[];
+  /** Whose turn it is — their token draws on top of a shared square. */
+  currentPlayer: PlayerColor;
   legalMoveIds: Set<string>;
   movingTokenId?: string | null;
   /** windup = anticipation dip before the first hop; stepping = hopping. */
@@ -88,6 +90,7 @@ function Star({ row, col, light }: { row: number; col: number; light?: boolean }
 
 export default function Board({
   tokens,
+  currentPlayer,
   legalMoveIds,
   movingTokenId,
   movePhase,
@@ -112,9 +115,26 @@ export default function Board({
     if (group) group.push(t.id);
     else groups.set(key, [t.id]);
   }
-  const sortedTokens = [...tokens].sort(
-    (a, b) => cellOf.get(a.id)!.row - cellOf.get(b.id)!.row,
+  // Depth order by row, exactly as before. The only addition: where a single
+  // square holds more than one colour, the current player's token is drawn
+  // last so it sits on top and is hit-tested first. Nothing moves, resizes or
+  // re-fans — this is purely paint order.
+  const cellKey = (id: string) => {
+    const c = cellOf.get(id)!;
+    return `${c.row},${c.col}`;
+  };
+  const mixedCells = new Set(
+    [...groups.entries()]
+      .filter(([, ids]) => new Set(ids.map(id => tokens.find(t => t.id === id)!.color)).size > 1)
+      .map(([key]) => key),
   );
+  const sortedTokens = [...tokens].sort((a, b) => {
+    const byRow = cellOf.get(a.id)!.row - cellOf.get(b.id)!.row;
+    if (byRow !== 0) return byRow;
+    const key = cellKey(a.id);
+    if (key !== cellKey(b.id) || !mixedCells.has(key)) return 0;
+    return Number(a.color === currentPlayer) - Number(b.color === currentPlayer);
+  });
 
   return (
     <svg
@@ -251,6 +271,9 @@ export default function Board({
                 ? ({ '--fx': `${flight.dx}px`, '--fy': `${flight.dy}px` } as CSSProperties)
                 : undefined
             }
+            // A token you cannot move takes no taps at all, so it can never
+            // swallow a tap aimed at your own token underneath or beside it.
+            pointerEvents={isLegal ? undefined : 'none'}
             onClick={() => isLegal && onTokenClick(token.id)}
           >
             {isLegal && <circle r={0.46} cy={0.06} className="token-highlight" />}
@@ -356,13 +379,15 @@ export default function Board({
           const y = cell.row < 4 ? cell.row + 0.9 : cell.row - size - 1.1;
           return (
             <g className="value-picker">
-              {/* tap anywhere else to cancel */}
+              {/* Invisible catcher: tapping anywhere else cancels. Deliberately
+                  not a dark scrim — the board stays at normal brightness while
+                  the player picks a value. */}
               <rect
                 x={0}
                 y={0}
                 width={BOARD_SIZE}
                 height={BOARD_SIZE}
-                fill="rgba(4,10,24,0.45)"
+                fill="transparent"
                 onClick={() => onCancelPicker?.()}
               />
               {picker.values.map((value, i) => (
