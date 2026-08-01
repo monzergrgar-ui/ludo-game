@@ -113,6 +113,11 @@ function Die({ value, rolling, canRoll, inactive, landing, onRoll }: DieProps) {
     e.preventDefault(); // no double-tap zoom, no synthetic click afterwards
     setPressed(true);
     setTimeout(() => setPressed(false), 140);
+    // Input dies with the turn: canRoll is recomputed from state every render,
+    // so the instant the turn ends this die stops emitting rolls — no
+    // live-but-invalid window while a transition animation plays out. The
+    // press flash still fires, so a stray tap looks acknowledged, not broken.
+    if (!canRoll) return;
     onRoll();
   };
 
@@ -671,7 +676,11 @@ function App() {
   const [rolledThisTurn, setRolledThisTurn] = useState<number[]>([]);
   /** Another roll is waiting to be taken — drives the nudge arrow. */
   const [extraRollPending, setExtraRollPending] = useState(false);
-  const pendingRollAt = useRef<number | null>(null);
+  /**
+   * A buffered tap remembers WHOSE die was tapped. Without the colour a tap
+   * that resolved after the turn advanced was applied to the new player.
+   */
+  const pendingRoll = useRef<{ color: PlayerColor; at: number } | null>(null);
 
   /**
    * Bumped once per completed dice roll. Everything that must react to *every*
@@ -884,16 +893,19 @@ function App() {
   const currentIsBot = inGame && botSeats.has(state.currentPlayer);
   const legalMoveIds = new Set(currentIsBot ? [] : legalMoves.map(t => t.id));
 
-  const handleRoll = async () => {
+  const handleRoll = async (color: PlayerColor) => {
     // Ref lock, not render state: two callers in the same tick (a tap plus a
     // buffered/bot roll) would otherwise both pass a stale `busy` check and
     // register two rolls.
     if (rollingRef.current) return;
+    // Validated against live state at EXECUTION time, not against whatever was
+    // current when the tap was bound or queued. If the turn moved on in
+    // between, this roll belonged to the previous player and is discarded.
     const s0 = stateRef.current;
-    if (animRef.current || s0.phase !== 'rolling' || s0.winner) return;
+    if (animRef.current || !isRollAllowed(s0, color)) return;
     rollingRef.current = true;
 
-    const roller = s0.currentPlayer;
+    const roller = color;
     setRolling(true);
     playSound('dice');
     const record = await providerRef.current.roll(clientSeed);
@@ -933,12 +945,13 @@ function App() {
   // step of a move animation is queued and fires the moment the board is free.
   /** `color` is the die that was tapped — never assume it is the active one. */
   const requestRoll = (color: PlayerColor) => {
-    // A die belongs to one player. Tapping anyone else's does nothing at all,
-    // and is never buffered — otherwise it would fire on their turn instead.
-    if (color !== state.currentPlayer || botSeats.has(color)) return;
+    // Checked against live state, not the render closure: during a turn
+    // transition the closure can still name the previous player.
+    const live = stateRef.current;
+    if (color !== live.currentPlayer || botSeats.has(color) || live.winner) return;
 
-    if (!busy && !rollingRef.current && isRollAllowed(state, color)) {
-      void handleRoll();
+    if (!busy && !rollingRef.current && isRollAllowed(live, color)) {
+      void handleRoll(color);
       return;
     }
     // Anything we can't act on right now is buffered rather than dropped. The
@@ -946,23 +959,30 @@ function App() {
     // input once the previous move's state has settled — a fast tap lands in
     // that gap. Buffer unconditionally (bar a finished game) and let the
     // effect below decide when it is safe to fire; staleness is judged there.
-    if (!state.winner) {
-      pendingRollAt.current = Date.now();
-    }
+    pendingRoll.current = { color, at: Date.now() };
   };
 
   // Fires a buffered tap as soon as the die genuinely accepts input. Depends on
   // the whole state object so it re-checks after every transition, not just the
   // one that happened to be in flight when the tap arrived.
   useEffect(() => {
-    if (pendingRollAt.current === null) return;
+    const buffered = pendingRoll.current;
+    if (buffered === null) return;
+
+    // A buffered tap belongs to one turn. If the turn moved on before it could
+    // run, drop it outright — deferring it would roll for the wrong player,
+    // which is exactly the double-tap bug.
+    if (buffered.color !== state.currentPlayer) {
+      pendingRoll.current = null;
+      return;
+    }
     if (busy || rollingRef.current || state.winner || currentIsBot) return;
     if (state.phase !== 'rolling') return;
-    // Generous enough to cover a full move animation, short enough that a tap
-    // from a previous turn can never roll for you.
-    const fresh = Date.now() - pendingRollAt.current < 2500;
-    pendingRollAt.current = null;
-    if (fresh) void handleRoll();
+    // Generous enough to cover a full move animation. The turn check above is
+    // the real guard; this only discards taps the player has forgotten about.
+    const fresh = Date.now() - buffered.at < 2500;
+    pendingRoll.current = null;
+    if (fresh) void handleRoll(buffered.color);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, state, currentIsBot]);
 
@@ -1049,7 +1069,8 @@ function App() {
   useEffect(() => {
     if (!currentIsBot || busy || state.winner) return;
     if (state.phase === 'rolling') {
-      const t = setTimeout(() => void handleRoll(), timings.botRoll);
+      const bot = state.currentPlayer;
+      const t = setTimeout(() => void handleRoll(bot), timings.botRoll);
       return () => clearTimeout(t);
     }
     if (playableDice.length === 0) return;
@@ -1071,7 +1092,7 @@ function App() {
     setHomedId(null);
     setShaking(false);
     setRolling(false);
-    pendingRollAt.current = null;
+    pendingRoll.current = null;
     rollingRef.current = false;
     autoScheduledKeyRef.current = null;
     lastTickRef.current = null;

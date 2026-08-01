@@ -562,6 +562,62 @@ describe('home arrival is reported to the UI', () => {
   });
 });
 
+describe('a tap can never roll for the next player', () => {
+  // A buffered tap is only ever replayed if isRollAllowed still holds for the
+  // colour that was tapped. These cover the three ways a tap can outlive its
+  // own turn.
+
+  it('drops a second tap taken during the no-legal-moves transition', () => {
+    // Red, everything in base, rolls a 4: nothing can move, so the turn will
+    // pass. A tap during that window must not roll for anyone.
+    let state = createInitialState(['red', 'yellow']);
+    state = registerDiceRoll(state, 4);
+    expect(getPlayableDice(state)).toEqual([]);
+    // Mid-transition the tap is invalid even for red — still allocating.
+    expect(isRollAllowed(state, 'red')).toBe(false);
+
+    state = passTurn(state);
+    expect(state.currentPlayer).toBe('yellow');
+    // The buffered tap was red's; it must not be honoured now.
+    expect(isRollAllowed(state, 'red')).toBe(false);
+    expect(state.currentPlayer).not.toBe('red');
+  });
+
+  it('drops a tap landing exactly as the turn passes', () => {
+    const before = registerDiceRoll(createInitialState(['red', 'yellow']), 4);
+    const tapped = before.currentPlayer; // 'red' — captured when the tap fires
+    const after = passTurn(before);
+
+    // Replaying the tap against the state it resolves in must be refused.
+    expect(tapped).toBe('red');
+    expect(isRollAllowed(after, tapped)).toBe(false);
+    expect(isRollAllowed(after, after.currentPlayer)).toBe(true);
+  });
+
+  it('rapid repeated taps on one die yield a single roll', () => {
+    const start = createInitialState(['red', 'yellow']);
+    expect(isRollAllowed(start, 'red')).toBe(true);
+
+    // The first tap resolves; every later tap sees a state that is no longer
+    // in the rolling phase, so none of them can roll again.
+    const rolled = registerDiceRoll(start, 4);
+    for (let i = 0; i < 5; i++) {
+      expect(isRollAllowed(rolled, 'red'), `repeat tap ${i}`).toBe(false);
+      expect(isRollAllowed(rolled, 'yellow'), `repeat tap ${i} as yellow`).toBe(false);
+    }
+  });
+
+  it('a tap held across a whole turn cycle still cannot roll out of order', () => {
+    let state = createInitialState(['red', 'yellow']);
+    state = passTurn(registerDiceRoll(state, 4)); // yellow's turn
+    state = passTurn(registerDiceRoll(state, 4)); // back to red
+    // Red is current again, but only because the cycle came round — a stale
+    // yellow tap must still be refused.
+    expect(isRollAllowed(state, 'yellow')).toBe(false);
+    expect(isRollAllowed(state, 'red')).toBe(true);
+  });
+});
+
 describe('a die may only be rolled by its own player', () => {
   // Regression: every player's die is on screen, and tapping an idle player's
   // die rolled for whoever's turn it actually was.
