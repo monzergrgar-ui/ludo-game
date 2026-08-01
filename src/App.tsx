@@ -163,6 +163,7 @@ const CORNER_CLASS: Record<PlayerColor, string> = {
 
 interface CornerDieProps {
   color: PlayerColor;
+  isBot: boolean;
   active: boolean;
   face: number | null;
   rolling: boolean;
@@ -182,6 +183,7 @@ interface CornerDieProps {
  */
 function CornerDie({
   color,
+  isBot,
   active,
   face,
   rolling,
@@ -197,6 +199,9 @@ function CornerDie({
       style={{ '--panel-color': COLORS[color] } as CSSProperties}
     >
       {active && extraRoll && <span className="roll-again" aria-hidden="true" />}
+      <span className="corner-avatar" aria-hidden="true">
+        {isBot ? '🤖' : '🙂'}
+      </span>
       <Die
         value={face}
         rolling={rolling && active}
@@ -869,16 +874,11 @@ function App() {
       : (playableDice[0] ?? null);
   const legalMoves: Token[] = activeDice !== null ? getLegalMoves(state, activeDice) : [];
 
-  // Queue shown beside the active die: the aimed value is on the die face, so
-  // only the remainder rides alongside it.
-  const queueBeside = (() => {
-    const rest = [...state.diceQueue];
-    if (activeDice !== null) {
-      const at = rest.indexOf(activeDice);
-      if (at !== -1) rest.splice(at, 1);
-    }
-    return rest;
-  })();
+  // Mini dice are a "what's left to play" list, and only earn their space when
+  // there is more than one value: with a single pending value the main die
+  // already shows it. diceQueue keeps roll order and drops spent values, so the
+  // row stays stationary and each spent value's face simply disappears.
+  const queueMinis = state.diceQueue.length >= 2 ? state.diceQueue : [];
   const busy = anim !== null || rolling;
   const currentIsBot = inGame && botSeats.has(state.currentPlayer);
   const legalMoveIds = new Set(currentIsBot ? [] : legalMoves.map(t => t.id));
@@ -1198,7 +1198,8 @@ function App() {
               (state.phase === 'rolling' || anim !== null)
             }
             dieLanding={dieLanding}
-            queue={queueBeside}
+            queue={queueMinis}
+            isBot={botSeats.has(color)}
             extraRoll={extraRollPending}
             onRoll={requestRoll}
           />

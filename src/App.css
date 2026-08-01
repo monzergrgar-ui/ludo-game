@@ -297,28 +297,48 @@ body {
 
 /* Each die sits in the ring, diagonally out from its own colour's corner and
    clear of the board by --die-gap. */
+/* Avatar and die read as one unit, with the avatar on the outer side so the
+   pair reads outward from its own corner. Both live in the band, never the
+   board, so no viewport size can make them overlap it. */
 .corner-die {
   position: absolute;
   z-index: 6;
-  width: var(--die-size);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--die-size) * 0.12);
   height: var(--die-size);
-  border-radius: 50%;
   transition: filter 0.3s ease-out, transform 0.3s ease-out;
-  filter: saturate(0.45) brightness(0.7);
+  filter: saturate(0.35) brightness(0.62);
 }
 
 .cd-tl { top: 0; left: 0; }
-.cd-tr { top: 0; right: 0; }
 .cd-bl { bottom: 0; left: 0; }
-.cd-br { bottom: 0; right: 0; }
+.cd-tr { top: 0; right: 0; flex-direction: row-reverse; }
+.cd-br { bottom: 0; right: 0; flex-direction: row-reverse; }
+
+.corner-avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: calc(var(--die-size) * 0.84);
+  height: calc(var(--die-size) * 0.84);
+  border-radius: calc(var(--die-size) * 0.24);
+  font-size: calc(var(--die-size) * 0.46);
+  line-height: 1;
+  background: linear-gradient(180deg, #f4f2ea, #d9d5c9);
+  border: calc(var(--die-size) * 0.07) solid var(--panel-color);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
+}
 
 .corner-active {
   filter: none;
-  background: radial-gradient(
-    circle,
-    color-mix(in srgb, var(--panel-color) 85%, transparent) 0%,
-    transparent 72%
-  );
+}
+
+.corner-active .corner-avatar {
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.45),
+    0 0 14px 2px color-mix(in srgb, var(--panel-color) 80%, transparent);
   animation: corner-glow 1.2s ease-in-out infinite;
 }
 
